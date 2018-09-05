@@ -53,11 +53,16 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory):
             a map from (type, state_key) to event_id.
     """
 
+    logger.debug("Computing conflicted state")
+
     # First split up the un/conflicted state
     unconflicted_state, conflicted_state = _seperate(state_sets)
 
     if not conflicted_state:
         defer.returnValue(unconflicted_state)
+
+    logger.debug("%d conflicted state entries", len(conflicted_state))
+    logger.debug("Calculating auth chain difference")
 
     # Also fetch all auth events that appear in only some of the state sets'
     # auth chains.
@@ -75,16 +80,23 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory):
             events = yield state_map_factory([eid])
             event_map.update(events)
 
+    full_conflicted_set = set(eid for eid in full_conflicted_set if eid in event_map)
+
+    logger.debug("%d full_conflicted_set entries", len(full_conflicted_set))
+
     # Get and sort all the power events (kicks/bans/etc)
     power_events = (
         eid for eid in full_conflicted_set
         if _is_power_event(event_map[eid])
     )
+
     sorted_power_events = _reverse_topological_power_sort(
         power_events,
         event_map,
         full_conflicted_set,
     )
+
+    logger.debug("sorted %d power events", len(sorted_power_events))
 
     # Now sequentially auth each one
     resolved_state = yield _iterative_auth_checks(
@@ -92,27 +104,37 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory):
         state_map_factory,
     )
 
+    logger.debug("resolved power events")
+
     # OK, so we've now resolved the power events. Now sort the remaining
     # events using the mainline of the resolved power level.
 
-    leftover_events = (
+    leftover_events = [
         ev_id
         for ev_id in full_conflicted_set
         if ev_id not in sorted_power_events
-    )
+    ]
+
+    logger.debug("sorting %d remaining events", len(leftover_events))
 
     pl = resolved_state.get((EventTypes.PowerLevels, ""), None)
     leftover_events = yield _mainline_sort(
         leftover_events, pl, event_map, state_map_factory,
     )
 
+    logger.debug("resolving remaining events")
+
     resolved_state = yield _iterative_auth_checks(
         leftover_events, resolved_state, event_map,
         state_map_factory,
     )
 
+    logger.debug("resolved")
+
     # We make sure that unconflicted state always still applies.
     resolved_state.update(unconflicted_state)
+
+    logger.debug("done")
 
     defer.returnValue(resolved_state)
 
@@ -124,6 +146,8 @@ def _get_power_level_for_sender(event_id, event_map):
     event = event_map[event_id]
 
     for aid, _ in event.auth_events:
+        if aid not in event_map:
+            continue
         aev = event_map[aid]
         if (aev.type, aev.state_key) == (EventTypes.PowerLevels, ""):
             pl = aev
@@ -176,12 +200,15 @@ def _get_auth_chain_difference(state_sets, event_map, state_map_factory):
 
         while True:
             added = set()
+
+            if set(to_check) - set(event_map):
+                events = yield state_map_factory(to_check)
+                event_map.update(events)
+
             for aid in set(to_check):
                 auth_event = event_map.get(aid)
                 if not auth_event:
-                    events = yield state_map_factory([aid])
-                    auth_event = events[aid]
-                    event_map[aid] = auth_event
+                    continue
 
                 to_add = [
                     eid for eid, _ in auth_event.auth_events
@@ -305,7 +332,11 @@ def _iterative_auth_checks(event_ids, base_state, event_map, state_map_factory):
 
         for key in event_auth.auth_types_for_event(event):
             if key in resolved_state:
-                auth_events[key] = event_map[resolved_state[key]]
+                ev_id = resolved_state[key]
+                if ev_id not in event_map:
+                    events = yield state_map_factory([ev_id])
+                    event_map.update(events)
+                auth_events[key] = event_map[ev_id]
 
         try:
             event_auth.check(

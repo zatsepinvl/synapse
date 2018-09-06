@@ -29,8 +29,24 @@ from synapse.api.errors import AuthError
 logger = logging.getLogger(__name__)
 
 
+class EventFetcher(object):
+    def __init__(self, event_map, state_map_factory):
+        self.event_map = event_map
+        self.state_map_factory = state_map_factory
+
+    @defer.inlineCallbacks
+    def get_event(self, event_id):
+        event = self.event_map.get(event_id)
+        if event:
+            defer.returnValue(event)
+
+        events = yield self.state_map_factory([event_id])
+        self.event_map.update(events)
+        defer.returnValue(self.event_map[event_id])
+
+
 @defer.inlineCallbacks
-def resolve_events_with_factory(state_sets, event_map, state_map_factory):
+def resolve_events_with_factory(state_sets, event_map, state_map_factory, auth_chain_factory):
     """
     Args:
         state_sets(list): List of dicts of (type, state_key) -> event_id,
@@ -68,6 +84,7 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory):
     # auth chains.
     auth_diff = yield _get_auth_chain_difference(
         state_sets, event_map, state_map_factory,
+        auth_chain_factory,
     )
 
     full_conflicted_set = set(itertools.chain(
@@ -75,10 +92,11 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory):
         auth_diff,
     ))
 
-    for eid in full_conflicted_set:
-        if eid not in event_map:
-            events = yield state_map_factory([eid])
-            event_map.update(events)
+    events = yield state_map_factory([
+        eid for eid in full_conflicted_set
+        if eid not in event_map
+    ])
+    event_map.update(events)
 
     full_conflicted_set = set(eid for eid in full_conflicted_set if eid in event_map)
 
@@ -90,9 +108,10 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory):
         if _is_power_event(event_map[eid])
     )
 
-    sorted_power_events = _reverse_topological_power_sort(
+    sorted_power_events = yield _reverse_topological_power_sort(
         power_events,
         event_map,
+        state_map_factory,
         full_conflicted_set,
     )
 
@@ -139,10 +158,14 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory):
     defer.returnValue(resolved_state)
 
 
-def _get_power_level_for_sender(event_id, event_map):
+@defer.inlineCallbacks
+def _get_power_level_for_sender(event_id, event_map, state_map_factory):
     """Return the power level of the sender of the given event according to
     their auth events.
     """
+    if event_id not in event_map:
+        events = yield state_map_factory([event_id])
+        event_map.update(events)
     event = event_map[event_id]
 
     for aid, _ in event.auth_events:
@@ -158,22 +181,22 @@ def _get_power_level_for_sender(event_id, event_map):
             aev = event_map[aid]
             if (aev.type, aev.state_key) == (EventTypes.Create, ""):
                 if aev.content.get("creator") == event.sender:
-                    return 100
+                    defer.returnValue(100)
                 break
-        return 0
+        defer.returnValue(0)
 
     level = pl.content.get("users", {}).get(event.sender)
     if level is None:
         level = pl.content.get("users_default", 0)
 
     if level is None:
-        return 0
+        defer.returnValue(0)
     else:
-        return int(level)
+        defer.returnValue(int(level))
 
 
 @defer.inlineCallbacks
-def _get_auth_chain_difference(state_sets, event_map, state_map_factory):
+def _get_auth_chain_difference(state_sets, event_map, state_map_factory, auth_chain_factory):
     """Compare the auth chains of each state set and return the set of events
     that only appear in some but not all of the auth chains.
     """
@@ -196,33 +219,8 @@ def _get_auth_chain_difference(state_sets, event_map, state_map_factory):
             )) and eid not in common
         )
 
-        to_check = auth_ids
-
-        while True:
-            added = set()
-
-            if set(to_check) - set(event_map):
-                events = yield state_map_factory(to_check)
-                event_map.update(events)
-
-            for aid in set(to_check):
-                auth_event = event_map.get(aid)
-                if not auth_event:
-                    continue
-
-                to_add = [
-                    eid for eid, _ in auth_event.auth_events
-                    if eid not in auth_ids
-                    and eid not in common
-                ]
-                if to_add:
-                    added.update(to_add)
-                    auth_ids.update(to_add)
-
-            if not added:
-                break
-
-            to_check = added
+        auth_chain = yield auth_chain_factory(auth_ids)
+        auth_ids.update(auth_chain)
 
         auth_sets.append(auth_ids)
 
@@ -286,7 +284,8 @@ def _add_event_and_auth_chain_to_graph(graph, event_id, event_map, auth_diff):
                     state.append(aid)
 
 
-def _reverse_topological_power_sort(event_ids, event_map, auth_diff):
+@defer.inlineCallbacks
+def _reverse_topological_power_sort(event_ids, event_map, state_map_factory, auth_diff):
     """Returns a list of the event_ids sorted by reverse topological ordering,
     and then by power level and origin_server_ts
     """
@@ -297,9 +296,14 @@ def _reverse_topological_power_sort(event_ids, event_map, auth_diff):
             graph, event_id, event_map, auth_diff,
         )
 
+    event_to_pl = {}
+    for event_id in graph.nodes():
+        pl = yield _get_power_level_for_sender(event_id, event_map, state_map_factory)
+        event_to_pl[event_id] = pl
+
     def _get_power_order(event_id):
         ev = event_map[event_id]
-        pl = _get_power_level_for_sender(event_id, event_map)
+        pl = _event_to_pl[event_id]
 
         return -pl, ev.origin_server_ts, event_id
 
@@ -309,7 +313,7 @@ def _reverse_topological_power_sort(event_ids, event_map, auth_diff):
     )
     sorted_events = list(it)
 
-    return sorted_events
+    defer.returnValue(sorted_events)
 
 
 @defer.inlineCallbacks

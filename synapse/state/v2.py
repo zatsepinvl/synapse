@@ -146,15 +146,15 @@ def _get_power_level_for_sender(event_id, event_map, state_res_store):
     """
     event = yield _get_event(event_id, event_map, state_res_store)
 
+    pl = None
     for aid, _ in event.auth_events:
-        if aid not in event_map:
-            continue
-        aev = event_map[aid]
+        aev = yield _get_event(aid, event_map, state_res_store)
         if (aev.type, aev.state_key) == (EventTypes.PowerLevels, ""):
             pl = aev
             break
-    else:
-        # Check if they're creator
+
+    if pl is None:
+        # Couldn't find power level. Check if they're the creator of the room
         for aid, _ in event.auth_events:
             aev = yield _get_event(aid, event_map, state_res_store)
             if (aev.type, aev.state_key) == (EventTypes.Create, ""):
@@ -354,29 +354,41 @@ def _mainline_sort(event_ids, resolved_power_event_id, event_map,
 
     mainline_map = {ev_id: i + 1 for i, ev_id in enumerate(reversed(mainline))}
 
-    @defer.inlineCallbacks
-    def get_mainline_depth(event):
-        if event.event_id in mainline_map:
-            defer.returnValue(mainline_map[event.event_id])
-
-        for aid, _ in event.auth_events:
-            aev = yield _get_event(aid, event_map, state_res_store)
-            if (aev.type, aev.state_key) == (EventTypes.PowerLevels, ""):
-                ret = yield get_mainline_depth(aev)
-                defer.returnValue(ret + 1)
-
-        defer.returnValue(0)
-
     event_ids = list(event_ids)
 
     order_map = {}
     for ev_id in event_ids:
-        depth = yield get_mainline_depth(event_map[ev_id])
+        depth = yield _get_mainline_depth_for_event(
+            event_map[ev_id], mainline_map,
+            event_map, state_res_store,
+        )
         order_map[ev_id] = (depth, event_map[ev_id].origin_server_ts, ev_id)
 
     event_ids.sort(key=lambda ev_id: order_map[ev_id])
 
     defer.returnValue(event_ids)
+
+
+@defer.inlineCallbacks
+def _get_mainline_depth_for_event(event, mainline_map, event_map, state_res_store):
+    # We do an iterative search, replacing `event with the power level in its
+    # auth events (if any)
+    while event:
+        depth = mainline_map.get(event.event_id)
+        if depth is not None:
+            defer.returnValue(depth)
+
+        auth_events = event.auth_events
+        event = None
+
+        for aid, _ in auth_events:
+            aev = yield _get_event(aid, event_map, state_res_store)
+            if (aev.type, aev.state_key) == (EventTypes.PowerLevels, ""):
+                event = aev
+                break
+
+    # Didn't find a power level auth event, so we just return 0
+    defer.returnValue(0)
 
 
 @defer.inlineCallbacks

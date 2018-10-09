@@ -15,6 +15,7 @@
 
 import itertools
 
+import attr
 import networkx
 
 from synapse.api.constants import EventTypes, JoinRules, Membership
@@ -532,7 +533,7 @@ class StateTestCase(unittest.TestCase):
                 state_d = resolve_events_with_factory(
                     [state_at_event[n] for n in prev_events],
                     event_map=event_map,
-                    state_map_factory=None,
+                    state_res_store=TestStateResolutionStore(event_map),
                 )
 
                 self.assertTrue(state_d.called)
@@ -580,3 +581,60 @@ def pairwise(iterable):
     a, b = itertools.tee(iterable)
     next(b, None)
     return itertools.izip(a, b)
+
+
+@attr.s
+class TestStateResolutionStore(object):
+    event_map = attr.ib()
+
+    def get_events(self, event_ids, allow_rejected=False):
+        """Get events from the database
+
+        Args:
+            event_ids (list): The event_ids of the events to fetch
+            allow_rejected (bool): If True return rejected events.
+
+        Returns:
+            Deferred[dict[str, FrozenEvent]]: Dict from event_id to event.
+        """
+
+        return {
+            eid: self.event_map[eid]
+            for eid in event_ids
+            if eid in self.event_map
+        }
+
+    def get_auth_chain(self, event_ids):
+        """Gets the full auth chain for a set of events (including rejected
+        events).
+
+        Includes the given event IDs in the result.
+
+        Note that:
+            1. All events must be state events.
+            2. For v1 rooms this may not have the full auth chain in the
+               presence of rejected events
+
+        Args:
+            event_ids (list): The event IDs of the events to fetch the auth
+                chain for. Must be state events.
+
+        Returns:
+            Deferred[list[str]]: List of event IDs of the auth chain.
+        """
+
+        # Simple DFS for auth chain
+        result = set()
+        stack = list(event_ids)
+        while stack:
+            event_id = stack.pop()
+            if event_id in result:
+                continue
+
+            result.add(event_id)
+
+            event = self.event_map[event_id]
+            for aid, _ in event.auth_events:
+                stack.append(aid)
+
+        return list(result)

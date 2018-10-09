@@ -29,24 +29,8 @@ from synapse.api.errors import AuthError
 logger = logging.getLogger(__name__)
 
 
-class EventFetcher(object):
-    def __init__(self, event_map, state_map_factory):
-        self.event_map = event_map
-        self.state_map_factory = state_map_factory
-
-    @defer.inlineCallbacks
-    def get_event(self, event_id):
-        event = self.event_map.get(event_id)
-        if event:
-            defer.returnValue(event)
-
-        events = yield self.state_map_factory([event_id])
-        self.event_map.update(events)
-        defer.returnValue(self.event_map[event_id])
-
-
 @defer.inlineCallbacks
-def resolve_events_with_factory(state_sets, event_map, state_map_factory, auth_chain_factory):
+def resolve_events_with_factory(state_sets, event_map, state_res_store):
     """
     Args:
         state_sets(list): List of dicts of (type, state_key) -> event_id,
@@ -56,13 +40,11 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory, auth_c
             a dict from event_id to event, for any events that we happen to
             have in flight (eg, those currently being persisted). This will be
             used as a starting point fof finding the state we need; any missing
-            events will be requested via state_map_factory.
+            events will be requested via state_res_store.
 
-            If None, all events will be fetched via state_map_factory.
+            If None, all events will be fetched via state_res_store.
 
-        state_map_factory(func): will be called
-            with a list of event_ids that are needed, and should return with
-            a Deferred of dict of event_id to event.
+        state_res_store (StateResolutionStore)
 
     Returns
         Deferred[dict[(str, str), str]]:
@@ -83,8 +65,7 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory, auth_c
     # Also fetch all auth events that appear in only some of the state sets'
     # auth chains.
     auth_diff = yield _get_auth_chain_difference(
-        state_sets, event_map, state_map_factory,
-        auth_chain_factory,
+        state_sets, event_map, state_res_store,
     )
 
     full_conflicted_set = set(itertools.chain(
@@ -92,10 +73,10 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory, auth_c
         auth_diff,
     ))
 
-    events = yield state_map_factory([
+    events = yield state_res_store.get_events([
         eid for eid in full_conflicted_set
         if eid not in event_map
-    ])
+    ], allow_rejected=True)
     event_map.update(events)
 
     full_conflicted_set = set(eid for eid in full_conflicted_set if eid in event_map)
@@ -111,7 +92,7 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory, auth_c
     sorted_power_events = yield _reverse_topological_power_sort(
         power_events,
         event_map,
-        state_map_factory,
+        state_res_store,
         full_conflicted_set,
     )
 
@@ -120,7 +101,7 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory, auth_c
     # Now sequentially auth each one
     resolved_state = yield _iterative_auth_checks(
         sorted_power_events, unconflicted_state, event_map,
-        state_map_factory,
+        state_res_store,
     )
 
     logger.debug("resolved power events")
@@ -138,14 +119,14 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory, auth_c
 
     pl = resolved_state.get((EventTypes.PowerLevels, ""), None)
     leftover_events = yield _mainline_sort(
-        leftover_events, pl, event_map, state_map_factory,
+        leftover_events, pl, event_map, state_res_store,
     )
 
     logger.debug("resolving remaining events")
 
     resolved_state = yield _iterative_auth_checks(
         leftover_events, resolved_state, event_map,
-        state_map_factory,
+        state_res_store,
     )
 
     logger.debug("resolved")
@@ -159,14 +140,11 @@ def resolve_events_with_factory(state_sets, event_map, state_map_factory, auth_c
 
 
 @defer.inlineCallbacks
-def _get_power_level_for_sender(event_id, event_map, state_map_factory):
+def _get_power_level_for_sender(event_id, event_map, state_res_store):
     """Return the power level of the sender of the given event according to
     their auth events.
     """
-    if event_id not in event_map:
-        events = yield state_map_factory([event_id])
-        event_map.update(events)
-    event = event_map[event_id]
+    event = yield _get_event(event_id, event_map, state_res_store)
 
     for aid, _ in event.auth_events:
         if aid not in event_map:
@@ -178,7 +156,7 @@ def _get_power_level_for_sender(event_id, event_map, state_map_factory):
     else:
         # Check if they're creator
         for aid, _ in event.auth_events:
-            aev = event_map[aid]
+            aev = yield _get_event(aid, event_map, state_res_store)
             if (aev.type, aev.state_key) == (EventTypes.Create, ""):
                 if aev.content.get("creator") == event.sender:
                     defer.returnValue(100)
@@ -196,7 +174,7 @@ def _get_power_level_for_sender(event_id, event_map, state_map_factory):
 
 
 @defer.inlineCallbacks
-def _get_auth_chain_difference(state_sets, event_map, state_map_factory, auth_chain_factory):
+def _get_auth_chain_difference(state_sets, event_map, state_res_store):
     """Compare the auth chains of each state set and return the set of events
     that only appear in some but not all of the auth chains.
     """
@@ -210,8 +188,8 @@ def _get_auth_chain_difference(state_sets, event_map, state_map_factory, auth_ch
             eid
             for key, eid in iteritems(state_set)
             if (key[0] in (
-                 EventTypes.Member,
-                 EventTypes.ThirdPartyInvite,
+                EventTypes.Member,
+                EventTypes.ThirdPartyInvite,
             ) or key in (
                 (EventTypes.PowerLevels, ''),
                 (EventTypes.Create, ''),
@@ -219,7 +197,7 @@ def _get_auth_chain_difference(state_sets, event_map, state_map_factory, auth_ch
             )) and eid not in common
         )
 
-        auth_chain = yield auth_chain_factory(auth_ids)
+        auth_chain = yield state_res_store.get_auth_chain(auth_ids)
         auth_ids.update(auth_chain)
 
         auth_sets.append(auth_ids)
@@ -285,7 +263,7 @@ def _add_event_and_auth_chain_to_graph(graph, event_id, event_map, auth_diff):
 
 
 @defer.inlineCallbacks
-def _reverse_topological_power_sort(event_ids, event_map, state_map_factory, auth_diff):
+def _reverse_topological_power_sort(event_ids, event_map, state_res_store, auth_diff):
     """Returns a list of the event_ids sorted by reverse topological ordering,
     and then by power level and origin_server_ts
     """
@@ -298,12 +276,12 @@ def _reverse_topological_power_sort(event_ids, event_map, state_map_factory, aut
 
     event_to_pl = {}
     for event_id in graph.nodes():
-        pl = yield _get_power_level_for_sender(event_id, event_map, state_map_factory)
+        pl = yield _get_power_level_for_sender(event_id, event_map, state_res_store)
         event_to_pl[event_id] = pl
 
     def _get_power_order(event_id):
         ev = event_map[event_id]
-        pl = _event_to_pl[event_id]
+        pl = event_to_pl[event_id]
 
         return -pl, ev.origin_server_ts, event_id
 
@@ -317,7 +295,7 @@ def _reverse_topological_power_sort(event_ids, event_map, state_map_factory, aut
 
 
 @defer.inlineCallbacks
-def _iterative_auth_checks(event_ids, base_state, event_map, state_map_factory):
+def _iterative_auth_checks(event_ids, base_state, event_map, state_res_store):
     """Sequentially apply auth checks to each event in given list, updating the
     state as it goes along.
     """
@@ -328,19 +306,18 @@ def _iterative_auth_checks(event_ids, base_state, event_map, state_map_factory):
 
         auth_events = {}
         for aid, _ in event.auth_events:
-            if aid not in event_map:
-                events = yield state_map_factory([aid])
-                event_map.update(events)
-            ev = event_map[aid]
-            auth_events[(ev.type, ev.state_key)] = ev
+            ev = yield _get_event(aid, event_map, state_res_store)
+
+            if ev.rejected_reason is None:
+                auth_events[(ev.type, ev.state_key)] = ev
 
         for key in event_auth.auth_types_for_event(event):
             if key in resolved_state:
                 ev_id = resolved_state[key]
-                if ev_id not in event_map:
-                    events = yield state_map_factory([ev_id])
-                    event_map.update(events)
-                auth_events[key] = event_map[ev_id]
+                ev = yield _get_event(ev_id, event_map, state_res_store)
+
+                if ev.rejected_reason is None:
+                    auth_events[key] = event_map[ev_id]
 
         try:
             event_auth.check(
@@ -358,7 +335,7 @@ def _iterative_auth_checks(event_ids, base_state, event_map, state_map_factory):
 
 @defer.inlineCallbacks
 def _mainline_sort(event_ids, resolved_power_event_id, event_map,
-                   state_map_factory):
+                   state_res_store):
     """Returns a sorted list of event_ids sorted by mainline ordering based on
     the given event resolved_power_event_id
     """
@@ -366,16 +343,11 @@ def _mainline_sort(event_ids, resolved_power_event_id, event_map,
     pl = resolved_power_event_id
     while pl:
         mainline.append(pl)
-        if pl not in event_map:
-            events = yield state_map_factory([pl])
-            event_map.update(events)
-        auth_events = event_map[pl].auth_events
+        pl_ev = yield _get_event(pl, event_map, state_res_store)
+        auth_events = pl_ev.auth_events
         pl = None
         for aid, _ in auth_events:
-            if aid not in event_map:
-                events = yield state_map_factory([aid])
-                event_map.update(events)
-            ev = event_map[aid]
+            ev = yield _get_event(aid, event_map, state_res_store)
             if (ev.type, ev.state_key) == (EventTypes.PowerLevels, ""):
                 pl = aid
                 break
@@ -388,10 +360,7 @@ def _mainline_sort(event_ids, resolved_power_event_id, event_map,
             defer.returnValue(mainline_map[event.event_id])
 
         for aid, _ in event.auth_events:
-            if aid not in event_map:
-                events = yield state_map_factory([aid])
-                event_map.update(events)
-            aev = event_map[aid]
+            aev = yield _get_event(aid, event_map, state_res_store)
             if (aev.type, aev.state_key) == (EventTypes.PowerLevels, ""):
                 ret = yield get_mainline_depth(aev)
                 defer.returnValue(ret + 1)
@@ -408,3 +377,11 @@ def _mainline_sort(event_ids, resolved_power_event_id, event_map,
     event_ids.sort(key=lambda ev_id: order_map[ev_id])
 
     defer.returnValue(event_ids)
+
+
+@defer.inlineCallbacks
+def _get_event(event_id, event_map, state_res_store):
+    if event_id not in event_map:
+        events = yield state_res_store.get_events([event_id], allow_rejected=True)
+        event_map.update(events)
+    defer.returnValue(event_map[event_id])

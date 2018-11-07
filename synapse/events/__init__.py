@@ -84,7 +84,7 @@ class FrozenEvent(object):
     room_id = attr.ib()
     sender = attr.ib()
     type = attr.ib()
-    _state_key = attr.ib()
+    _state_key = attr.ib()  # There is a property for `state_key`
     depth = attr.ib()
     redacts = attr.ib()
     origin_server_ts = attr.ib()

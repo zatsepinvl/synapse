@@ -14,6 +14,7 @@
 # limitations under the License.
 import logging
 
+from synapse.api.constants import RoomVersions
 from synapse.events import FrozenEvent
 from synapse.federation.federation_server import server_matches_acl_event
 
@@ -43,7 +44,8 @@ class ServerACLsTestCase(unittest.TestCase):
 
 
 def _create_acl_event(content):
-    return FrozenEvent.from_v1(
+    return FrozenEvent.from_dict(
+        RoomVersions.V1,
         {
             "room_id": "!a:b",
             "event_id": "$a:b",

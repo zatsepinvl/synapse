@@ -94,6 +94,7 @@ class FrozenEvent(object):
     unsigned = attr.ib()
     rejected_reason = attr.ib()
     internal_metadata = attr.ib()
+    room_version = attr.ib()
 
     _auth_event_ids = attr.ib()  # tuple[str]: list of auth event IDs
     _prev_event_ids = attr.ib()  # tuple[str]: list of prev event IDs
@@ -101,11 +102,38 @@ class FrozenEvent(object):
     _json = attr.ib()
 
     @staticmethod
-    def from_v1(event_dict, internal_metadata_dict={}, rejected_reason=None,
-                event_json=None):
+    def from_dict(room_version, event_dict, internal_metadata_dict={},
+                  rejected_reason=None, event_json=None):
+        """Parses the event dict from a room of the given version into a
+        FrozenEvent.
+
+        Args:
+            room_version (str)
+            event_dict (dict)
+            internal_metadata_dict (dict)
+            rejected_reason (str|None): If set the event was rejected for the
+                given reason.
+            event_json (str|None): If set the json string `event_dict` was
+                parse from. If not given then it will be calculated by
+                serializing `event_dict`
+
+        Returns:
+            FrozenEvent
+        """
+        # All events currently have the same format
+        return FrozenEvent._from_v1(
+            room_version, event_dict, internal_metadata_dict,
+            rejected_reason=rejected_reason,
+            event_json=event_json,
+        )
+
+    @staticmethod
+    def _from_v1(room_version, event_dict, internal_metadata_dict={},
+                 rejected_reason=None, event_json=None):
         """Creates a FrozenEvent from a v1 event
 
         Args:
+            room_version (str)
             event_dict (dict)
             internal_metadata_dict (dict)
             rejected_reason (str|None): If set the event was rejected for the
@@ -178,26 +206,16 @@ class FrozenEvent(object):
             json=event_json,
             rejected_reason=rejected_reason,
             internal_metadata=internal_metadata,
+            room_version=room_version,
         )
 
     def copy(self):
-        return FrozenEvent(
-            event_id=self.event_id,
-            room_id=self.room_id,
-            sender=self.sender,
-            type=self.type,
-            state_key=self._state_key,
-            depth=self.depth,
-            redacts=self.redacts,
-            origin_server_ts=self.origin_server_ts,
+        return attr.evolve(
+            self,
             content=dict(self.content),
             signatures=dict(self.signatures),
             hashes=dict(self.hashes),
-            auth_event_ids=self._auth_event_ids,
-            prev_event_ids=self._prev_event_ids,
             unsigned=dict(self.unsigned),
-            json=self._json,
-            rejected_reason=self.rejected_reason,
             internal_metadata=_EventInternalMetadata(
                 self.internal_metadata.get_dict(),
             ),

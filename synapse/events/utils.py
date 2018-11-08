@@ -105,7 +105,8 @@ def prune_event(event):
     if "replaces_state" in event.unsigned:
         allowed_fields["unsigned"]["replaces_state"] = event.unsigned["replaces_state"]
 
-    return FrozenEvent.from_v1(
+    return FrozenEvent.from_dict(
+        event.room_version,
         allowed_fields,
         internal_metadata_dict=event.internal_metadata.get_dict()
     )

@@ -404,8 +404,10 @@ class EventsWorkerStore(SQLBaseStore):
                     desc="_get_event_from_row_rejected_reason",
                 )
 
-            original_ev = FrozenEvent.from_v1(
-                d,
+            # room_version = yield self.get_room_version(d["room_id"])
+            original_ev = FrozenEvent.from_dict(
+                "v1",
+                event_dict=d,
                 internal_metadata_dict=internal_metadata,
                 rejected_reason=rejected_reason,
                 event_json=js,

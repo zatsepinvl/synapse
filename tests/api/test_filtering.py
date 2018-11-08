@@ -19,6 +19,7 @@ import jsonschema
 
 from twisted.internet import defer
 
+from synapse.api.constants import RoomVersions
 from synapse.api.errors import SynapseError
 from synapse.api.filtering import Filter
 from synapse.events import FrozenEvent
@@ -34,7 +35,7 @@ def MockEvent(**kwargs):
         kwargs["event_id"] = "fake_event_id"
     if "type" not in kwargs:
         kwargs["type"] = "fake_type"
-    return FrozenEvent.from_v1(kwargs)
+    return FrozenEvent.from_dict(RoomVersions.V1, kwargs)
 
 
 class FilteringTestCase(unittest.TestCase):

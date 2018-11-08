@@ -1201,13 +1201,18 @@ class FederationHandler(BaseHandler):
         """
         event_content = {"membership": Membership.JOIN}
 
-        builder = self.event_builder_factory.new({
-            "type": EventTypes.Member,
-            "content": event_content,
-            "room_id": room_id,
-            "sender": user_id,
-            "state_key": user_id,
-        })
+        room_version = yield self.store.get_room_version(room_id)
+
+        builder = self.event_builder_factory.new(
+            room_version,
+            {
+                "type": EventTypes.Member,
+                "content": event_content,
+                "room_id": room_id,
+                "sender": user_id,
+                "state_key": user_id,
+            }
+        )
 
         try:
             event, context = yield self.event_creation_handler.create_new_client_event(
@@ -1398,7 +1403,7 @@ class FederationHandler(BaseHandler):
         event.internal_metadata.outlier = False
 
         builder = self.event_builder_factory.new(
-            unfreeze(event.get_pdu_json())
+            event.room_version, unfreeze(event.get_pdu_json())
         )
 
         builder.event_id = self.event_builder_factory.create_event_id()
@@ -1422,13 +1427,17 @@ class FederationHandler(BaseHandler):
         leave event for the room and return that. We do *not* persist or
         process it until the other server has signed it and sent it back.
         """
-        builder = self.event_builder_factory.new({
-            "type": EventTypes.Member,
-            "content": {"membership": Membership.LEAVE},
-            "room_id": room_id,
-            "sender": user_id,
-            "state_key": user_id,
-        })
+        room_version = yield self.store.get_room_version(room_id)
+        builder = self.event_builder_factory.new(
+            room_version,
+            {
+                "type": EventTypes.Member,
+                "content": {"membership": Membership.LEAVE},
+                "room_id": room_id,
+                "sender": user_id,
+                "state_key": user_id,
+            }
+        )
 
         event, context = yield self.event_creation_handler.create_new_client_event(
             builder=builder,
@@ -2315,8 +2324,10 @@ class FederationHandler(BaseHandler):
             "state_key": target_user_id,
         }
 
+        room_version = yield self.store.get_room_version(room_id)
+
         if (yield self.auth.check_host_in_room(room_id, self.hs.hostname)):
-            builder = self.event_builder_factory.new(event_dict)
+            builder = self.event_builder_factory.new(room_version, event_dict)
             EventValidator().validate_new(builder)
             event, context = yield self.event_creation_handler.create_new_client_event(
                 builder=builder
@@ -2354,7 +2365,8 @@ class FederationHandler(BaseHandler):
         Returns:
             Deferred: resolves (to None)
         """
-        builder = self.event_builder_factory.new(event_dict)
+        room_version = yield self.store.get_room_version(room_id)
+        builder = self.event_builder_factory.new(room_version, event_dict)
 
         event, context = yield self.event_creation_handler.create_new_client_event(
             builder=builder,
@@ -2405,7 +2417,7 @@ class FederationHandler(BaseHandler):
             # auth checks. If we need the invite and don't have it then the
             # auth check code will explode appropriately.
 
-        builder = self.event_builder_factory.new(event_dict)
+        builder = self.event_builder_factory.new(event.room_version, event_dict)
         EventValidator().validate_new(builder)
         event, context = yield self.event_creation_handler.create_new_client_event(
             builder=builder,

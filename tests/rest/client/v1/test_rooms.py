@@ -225,6 +225,7 @@ class RoomPermissionsTestCase(RoomBase):
             self.render(request)
             self.assertEquals(expect_code, channel.code)
 
+    @unittest.DEBUG
     def test_membership_basic_room_perms(self):
         # === room does not exist ===
         room = self.uncreated_rmid

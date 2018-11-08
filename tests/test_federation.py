@@ -3,6 +3,7 @@ from mock import Mock
 
 from twisted.internet.defer import maybeDeferred, succeed
 
+from synapse.api.constants import RoomVersions
 from synapse.events import FrozenEvent
 from synapse.types import Requester, UserID
 from synapse.util import Clock
@@ -41,7 +42,8 @@ class MessageAcceptTests(unittest.TestCase):
             )
         )[0]
 
-        join_event = FrozenEvent.from_v1(
+        join_event = FrozenEvent.from_dict(
+            RoomVersions.V1,
             {
                 "room_id": self.room_id,
                 "sender": "@baduser:test.serv",
@@ -103,7 +105,8 @@ class MessageAcceptTests(unittest.TestCase):
         )[0]
 
         # Now lie about an event
-        lying_event = FrozenEvent.from_v1(
+        lying_event = FrozenEvent.from_dict(
+            RoomVersions.V1,
             {
                 "room_id": self.room_id,
                 "sender": "@baduser:test.serv",

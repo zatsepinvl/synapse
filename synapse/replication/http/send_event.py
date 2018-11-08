@@ -74,6 +74,7 @@ class ReplicationSendEventRestServlet(ReplicationEndpoint):
 
         payload = {
             "event": event.get_pdu_json(),
+            "room_version": event.room_version,
             "internal_metadata": event.internal_metadata.get_dict(),
             "rejected_reason": event.rejected_reason,
             "context": serialized_context,
@@ -90,10 +91,11 @@ class ReplicationSendEventRestServlet(ReplicationEndpoint):
             content = parse_json_object_from_request(request)
 
             event_dict = content["event"]
+            room_version = content["room_version"]
             internal_metadata = content["internal_metadata"]
             rejected_reason = content["rejected_reason"]
-            event = FrozenEvent.from_v1(
-                event_dict, internal_metadata, rejected_reason,
+            event = FrozenEvent.from_dict(
+                room_version, event_dict, internal_metadata, rejected_reason,
             )
 
             requester = Requester.deserialize(self.store, content["requester"])

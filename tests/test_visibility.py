@@ -17,6 +17,7 @@ import logging
 from twisted.internet import defer
 from twisted.internet.defer import succeed
 
+from synapse.api.constants import RoomVersions
 from synapse.events import FrozenEvent
 from synapse.visibility import filter_events_for_server
 
@@ -124,6 +125,7 @@ class FilterEventsForServerTestCase(tests.unittest.TestCase):
     def inject_visibility(self, user_id, visibility):
         content = {"history_visibility": visibility}
         builder = self.event_builder_factory.new(
+            RoomVersions.V1,
             {
                 "type": "m.room.history_visibility",
                 "sender": user_id,
@@ -144,6 +146,7 @@ class FilterEventsForServerTestCase(tests.unittest.TestCase):
         content = {"membership": membership}
         content.update(extra_content)
         builder = self.event_builder_factory.new(
+            RoomVersions.V1,
             {
                 "type": "m.room.member",
                 "sender": user_id,
@@ -165,6 +168,7 @@ class FilterEventsForServerTestCase(tests.unittest.TestCase):
         if content is None:
             content = {"body": "testytest"}
         builder = self.event_builder_factory.new(
+            RoomVersions.V1,
             {
                 "type": "m.room.message",
                 "sender": user_id,
@@ -200,7 +204,8 @@ class FilterEventsForServerTestCase(tests.unittest.TestCase):
         # history_visibility event.
         room_state = []
 
-        history_visibility_evt = FrozenEvent.from_v1(
+        history_visibility_evt = FrozenEvent.from_dict(
+            RoomVersions.V1,
             {
                 "event_id": "$history_vis",
                 "type": "m.room.history_visibility",
@@ -215,7 +220,8 @@ class FilterEventsForServerTestCase(tests.unittest.TestCase):
 
         for i in range(0, 100000):
             user = "@resident_user_%i:test.com" % (i,)
-            evt = FrozenEvent.from_v1(
+            evt = FrozenEvent.from_dict(
+                RoomVersions.V1,
                 {
                     "event_id": "$res_event_%i" % (i,),
                     "type": "m.room.member",
@@ -231,7 +237,8 @@ class FilterEventsForServerTestCase(tests.unittest.TestCase):
         events_to_filter = []
         for i in range(0, 10):
             user = "@user%i:%s" % (i, "test_server" if i == 5 else "other_server")
-            evt = FrozenEvent.from_v1(
+            evt = FrozenEvent.from_dict(
+                RoomVersions.V1,
                 {
                     "event_id": "$evt%i" % (i,),
                     "type": "m.room.member",

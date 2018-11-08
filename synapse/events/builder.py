@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from synapse.api.constants import RoomVersions
 from synapse.types import EventID
 from synapse.util.stringutils import random_string
 
@@ -61,6 +62,8 @@ class EventBuilderV1(object):
             internal_metadata_dict
         )
 
+        self.room_version = RoomVersions.V1
+
     auth_events = _event_dict_property("auth_events")
     depth = _event_dict_property("depth")
     content = _event_dict_property("content")
@@ -108,7 +111,8 @@ class EventBuilderV1(object):
 
     def build(self):
         # Make sure it matches
-        return FrozenEvent.from_v1(
+        return FrozenEvent.from_dict(
+            room_version=self.room_version,
             event_dict=self.get_dict(),
             internal_metadata_dict=self.internal_metadata.get_dict(),
         )
@@ -143,7 +147,7 @@ class EventBuilderFactory(object):
 
         return e_id.to_string()
 
-    def new(self, key_values={}):
+    def new(self, room_version, key_values):
         key_values["event_id"] = self.create_event_id()
 
         time_now = int(self.clock.time_msec())
@@ -157,4 +161,5 @@ class EventBuilderFactory(object):
 
         key_values["signatures"] = {}
 
+        # TODO: Check version
         return EventBuilderV1(key_values)

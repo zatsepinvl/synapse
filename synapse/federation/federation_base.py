@@ -20,7 +20,7 @@ import six
 from twisted.internet import defer
 from twisted.internet.defer import DeferredList
 
-from synapse.api.constants import MAX_DEPTH, EventTypes, Membership
+from synapse.api.constants import MAX_DEPTH, EventTypes, Membership, RoomVersions
 from synapse.api.errors import Codes, SynapseError
 from synapse.crypto.event_signing import check_event_content_hash
 from synapse.events import FrozenEvent
@@ -325,7 +325,8 @@ def event_from_pdu_json(pdu_json, outlier=False):
     elif depth > MAX_DEPTH:
         raise SynapseError(400, "Depth too large", Codes.BAD_JSON)
 
-    event = FrozenEvent.from_v1(
+    event = FrozenEvent.from_dict(
+        RoomVersions.V1,  # FIXME
         pdu_json
     )
 

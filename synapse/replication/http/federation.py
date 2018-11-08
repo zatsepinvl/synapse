@@ -70,6 +70,7 @@ class ReplicationFederationSendEventsRestServlet(ReplicationEndpoint):
 
             event_payloads.append({
                 "event": event.get_pdu_json(),
+                "room_version": event.room_version,
                 "internal_metadata": event.internal_metadata.get_dict(),
                 "rejected_reason": event.rejected_reason,
                 "context": serialized_context,
@@ -94,10 +95,11 @@ class ReplicationFederationSendEventsRestServlet(ReplicationEndpoint):
             event_and_contexts = []
             for event_payload in event_payloads:
                 event_dict = event_payload["event"]
+                room_version = event_payload["room_version"]
                 internal_metadata = event_payload["internal_metadata"]
                 rejected_reason = event_payload["rejected_reason"]
-                event = FrozenEvent.from_v1(
-                    event_dict, internal_metadata, rejected_reason,
+                event = FrozenEvent.from_dict(
+                    room_version, event_dict, internal_metadata, rejected_reason,
                 )
 
                 context = yield EventContext.deserialize(

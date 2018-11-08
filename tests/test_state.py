@@ -64,7 +64,7 @@ def create_event(
 
     d.update(kwargs)
 
-    event = FrozenEvent.from_v1(d)
+    event = FrozenEvent.from_dict(RoomVersions.V1, d)
 
     return event
 

@@ -24,7 +24,12 @@ from prometheus_client import Counter
 
 from twisted.internet import defer
 
-from synapse.api.constants import KNOWN_ROOM_VERSIONS, EventTypes, Membership
+from synapse.api.constants import (
+    KNOWN_ROOM_VERSIONS,
+    EventTypes,
+    Membership,
+    RoomVersions,
+)
 from synapse.api.errors import (
     CodeMessageException,
     FederationDeniedError,
@@ -570,6 +575,7 @@ class FederationClient(FederationBase):
             if "prev_state" not in pdu_dict:
                 pdu_dict["prev_state"] = []
 
+            # FIXME: Use the right version
             ev = builder.EventBuilderV1(pdu_dict)
 
             defer.returnValue(
@@ -613,7 +619,7 @@ class FederationClient(FederationBase):
                 )
 
             # the room version should be sane.
-            room_version = create_event.content.get("room_version", "1")
+            room_version = create_event.content.get("room_version", RoomVersions.V1)
             if room_version not in KNOWN_ROOM_VERSIONS:
                 # This shouldn't be possible, because the remote server should have
                 # rejected the join attempt during make_join.

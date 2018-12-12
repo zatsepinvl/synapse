@@ -89,6 +89,7 @@ class ConsentResource(Resource):
 
         self.hs = hs
         self.store = hs.get_datastore()
+        self.registration_handler = hs.get_handlers().registration_handler
 
         # this is required by the request_handler wrapper
         self.clock = hs.get_clock()
@@ -143,9 +144,9 @@ class ConsentResource(Resource):
         has_consented = False
         public_version = username == ""
         if not public_version:
-            userhmac = parse_string(request, "h", required=True, encoding=None)
+            userhmac_bytes = parse_string(request, "h", required=True, encoding=None)
 
-            self._check_hash(username, userhmac)
+            self._check_hash(username, userhmac_bytes)
 
             if username.startswith('@'):
                 qualified_user_id = username
@@ -155,13 +156,18 @@ class ConsentResource(Resource):
             u = yield self.store.get_user_by_id(qualified_user_id)
             if u is None:
                 raise NotFoundError("Unknown user")
+
             has_consented = u["consent_version"] == version
+            userhmac = userhmac_bytes.decode("ascii")
 
         try:
             self._render_template(
                 request, "%s.html" % (version,),
-                user=username, userhmac=userhmac, version=version,
-                has_consented=has_consented, public_version=public_version,
+                user=username,
+                userhmac=userhmac,
+                version=version,
+                has_consented=has_consented,
+                public_version=public_version,
             )
         except TemplateNotFound:
             raise NotFoundError("Unknown policy version")
@@ -194,6 +200,7 @@ class ConsentResource(Resource):
             if e.code != 404:
                 raise
             raise NotFoundError("Unknown user")
+        yield self.registration_handler.post_consent_actions(qualified_user_id)
 
         try:
             self._render_template(request, "success.html")
@@ -227,7 +234,7 @@ class ConsentResource(Resource):
             key=self._hmac_secret,
             msg=userid.encode('utf-8'),
             digestmod=sha256,
-        ).hexdigest()
+        ).hexdigest().encode('ascii')
 
         if not compare_digest(want_mac, userhmac):
             raise SynapseError(http_client.FORBIDDEN, "HMAC incorrect")

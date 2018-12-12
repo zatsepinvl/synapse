@@ -360,7 +360,7 @@ class RegisterRestServlet(RestServlet):
                 ])
 
         # Append m.login.terms to all flows if we're requiring consent
-        if self.hs.config.block_events_without_consent_error is not None:
+        if self.hs.config.user_consent_at_registration:
             new_flows = []
             for flow in flows:
                 flow.append(LoginType.TERMS)
@@ -457,6 +457,7 @@ class RegisterRestServlet(RestServlet):
             yield self.store.user_set_consent_version(
                 registered_user_id, self.hs.config.user_consent_version,
             )
+            yield self.registration_handler.post_consent_actions(registered_user_id)
 
         defer.returnValue((200, return_dict))
 

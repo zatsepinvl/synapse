@@ -25,7 +25,7 @@ from twisted.internet import defer
 from twisted.internet.abstract import isIPAddress
 from twisted.python import failure
 
-from synapse.api.constants import EventTypes
+from synapse.api.constants import EventTypes, RoomVersions
 from synapse.api.errors import (
     AuthError,
     FederationError,
@@ -180,12 +180,12 @@ class FederationServer(FederationBase):
             try:
                 # In future we will actually use the room version to parse the
                 # PDU into an event.
-                yield self.store.get_room_version(room_id)
+                room_version = yield self.store.get_room_version(room_id)
             except NotFoundError:
                 logger.info("Ignoring PDU for unknown room_id: %s", room_id)
                 continue
 
-            event = event_from_pdu_json(p)
+            event = event_from_pdu_json(p, room_version)
             pdus_by_room.setdefault(room_id, []).append(event)
 
         pdu_results = {}
@@ -370,7 +370,7 @@ class FederationServer(FederationBase):
 
     @defer.inlineCallbacks
     def on_invite_request(self, origin, content):
-        pdu = event_from_pdu_json(content)
+        pdu = event_from_pdu_json(content, RoomVersions.V1)
         origin_host, _ = parse_server_name(origin)
         yield self.check_server_matches_acl(origin_host, pdu.room_id)
         ret_pdu = yield self.handler.on_invite_request(origin, pdu)
@@ -380,7 +380,8 @@ class FederationServer(FederationBase):
     @defer.inlineCallbacks
     def on_send_join_request(self, origin, content):
         logger.debug("on_send_join_request: content: %s", content)
-        pdu = event_from_pdu_json(content)
+        room_version = yield self.store.get_room_version(content["room_id"])
+        pdu = event_from_pdu_json(content, room_version)
 
         origin_host, _ = parse_server_name(origin)
         yield self.check_server_matches_acl(origin_host, pdu.room_id)
@@ -406,7 +407,9 @@ class FederationServer(FederationBase):
     @defer.inlineCallbacks
     def on_send_leave_request(self, origin, content):
         logger.debug("on_send_leave_request: content: %s", content)
-        pdu = event_from_pdu_json(content)
+
+        room_version = yield self.store.get_room_version(content["room_id"])
+        pdu = event_from_pdu_json(content, room_version)
 
         origin_host, _ = parse_server_name(origin)
         yield self.check_server_matches_acl(origin_host, pdu.room_id)
@@ -452,8 +455,10 @@ class FederationServer(FederationBase):
             origin_host, _ = parse_server_name(origin)
             yield self.check_server_matches_acl(origin_host, room_id)
 
+            room_version = yield self.store.get_room_version(room_id)
+
             auth_chain = [
-                event_from_pdu_json(e)
+                event_from_pdu_json(e, room_version)
                 for e in content["auth_chain"]
             ]
 
@@ -660,9 +665,10 @@ class FederationServer(FederationBase):
         defer.returnValue(ret)
 
     @defer.inlineCallbacks
-    def on_exchange_third_party_invite_request(self, origin, room_id, event_dict):
+    def on_exchange_third_party_invite_request(self, origin, room_version,
+                                               room_id, event_dict):
         ret = yield self.handler.on_exchange_third_party_invite_request(
-            origin, room_id, event_dict
+            origin, room_version, room_id, event_dict
         )
         defer.returnValue(ret)
 

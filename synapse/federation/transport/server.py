@@ -21,6 +21,7 @@ import re
 from twisted.internet import defer
 
 import synapse
+from synapse.api.constants import RoomVersions
 from synapse.api.errors import Codes, FederationDeniedError, SynapseError
 from synapse.api.urls import FEDERATION_PREFIX as PREFIX
 from synapse.http.endpoint import parse_and_validate_server_name
@@ -504,8 +505,9 @@ class FederationThirdPartyInviteExchangeServlet(BaseFederationServlet):
 
     @defer.inlineCallbacks
     def on_PUT(self, origin, content, query, room_id):
+        room_version = parse_string_from_args(query, "ver", default=RoomVersions.V1)
         content = yield self.handler.on_exchange_third_party_invite_request(
-            origin, room_id, content
+            origin, room_version, room_id, content
         )
         defer.returnValue((200, content))
 

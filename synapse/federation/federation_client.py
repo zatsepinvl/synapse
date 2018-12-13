@@ -191,8 +191,9 @@ class FederationClient(FederationBase):
 
         logger.debug("backfill transaction_data=%s", repr(transaction_data))
 
+        room_version = yield self.store.get_room_version(context)
         pdus = [
-            event_from_pdu_json(p, outlier=False)
+            event_from_pdu_json(p, room_version, outlier=False)
             for p in transaction_data["pdus"]
         ]
 
@@ -249,7 +250,7 @@ class FederationClient(FederationBase):
                 logger.debug("transaction_data %r", transaction_data)
 
                 pdu_list = [
-                    event_from_pdu_json(p, outlier=outlier)
+                    event_from_pdu_json(p, RoomVersions.V1, outlier=outlier)
                     for p in transaction_data["pdus"]
                 ]
 
@@ -343,12 +344,15 @@ class FederationClient(FederationBase):
             destination, room_id, event_id=event_id,
         )
 
+        room_version = yield self.store.get_room_version(room_id)
+
         pdus = [
-            event_from_pdu_json(p, outlier=True) for p in result["pdus"]
+            event_from_pdu_json(p, room_version, outlier=True)
+            for p in result["pdus"]
         ]
 
         auth_chain = [
-            event_from_pdu_json(p, outlier=True)
+            event_from_pdu_json(p, room_version, outlier=True)
             for p in result.get("auth_chain", [])
         ]
 
@@ -449,8 +453,10 @@ class FederationClient(FederationBase):
             destination, room_id, event_id,
         )
 
+        room_version = yield self.store.get_room_version(room_id)
+
         auth_chain = [
-            event_from_pdu_json(p, outlier=True)
+            event_from_pdu_json(p, room_version, outlier=True)
             for p in res["auth_chain"]
         ]
 
@@ -586,7 +592,7 @@ class FederationClient(FederationBase):
             "make_" + membership, destinations, send_request,
         )
 
-    def send_join(self, destinations, pdu):
+    def send_join(self, destinations, pdu, room_version):
         """Sends a join event to one of a list of homeservers.
 
         Doing so will cause the remote server to add the event to the graph,
@@ -641,12 +647,12 @@ class FederationClient(FederationBase):
             logger.debug("Got content: %s", content)
 
             state = [
-                event_from_pdu_json(p, outlier=True)
+                event_from_pdu_json(p, room_version, outlier=True)
                 for p in content.get("state", [])
             ]
 
             auth_chain = [
-                event_from_pdu_json(p, outlier=True)
+                event_from_pdu_json(p, room_version, outlier=True)
                 for p in content.get("auth_chain", [])
             ]
 
@@ -707,7 +713,9 @@ class FederationClient(FederationBase):
 
         logger.debug("Got response to send_invite: %s", pdu_dict)
 
-        pdu = event_from_pdu_json(pdu_dict)
+        room_version = yield self.store.get_room_version(room_id)
+
+        pdu = event_from_pdu_json(pdu_dict, room_version)
 
         # Check signatures are correct.
         pdu = yield self._check_sigs_and_hash(pdu)
@@ -785,8 +793,10 @@ class FederationClient(FederationBase):
             content=send_content,
         )
 
+        room_version = yield self.store.get_room_version(room_id)
+
         auth_chain = [
-            event_from_pdu_json(e)
+            event_from_pdu_json(e, room_version)
             for e in content["auth_chain"]
         ]
 
@@ -833,8 +843,10 @@ class FederationClient(FederationBase):
                 timeout=timeout,
             )
 
+            room_version = yield self.store.get_room_version(room_id)
+
             events = [
-                event_from_pdu_json(e)
+                event_from_pdu_json(e, room_version)
                 for e in content.get("events", [])
             ]
 

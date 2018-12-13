@@ -20,7 +20,7 @@ import six
 from twisted.internet import defer
 from twisted.internet.defer import DeferredList
 
-from synapse.api.constants import MAX_DEPTH, EventTypes, Membership, RoomVersions
+from synapse.api.constants import MAX_DEPTH, EventTypes, Membership
 from synapse.api.errors import Codes, SynapseError
 from synapse.crypto.event_signing import check_event_content_hash
 from synapse.events import FrozenEvent
@@ -297,7 +297,7 @@ def _is_invite_via_3pid(event):
     )
 
 
-def event_from_pdu_json(pdu_json, outlier=False):
+def event_from_pdu_json(pdu_json, room_version, outlier=False):
     """Construct a FrozenEvent from an event json received over federation
 
     Args:
@@ -326,7 +326,7 @@ def event_from_pdu_json(pdu_json, outlier=False):
         raise SynapseError(400, "Depth too large", Codes.BAD_JSON)
 
     event = FrozenEvent.from_dict(
-        RoomVersions.V1,  # FIXME
+        room_version,  # FIXME
         pdu_json
     )
 

@@ -34,6 +34,7 @@ from synapse.api.constants import (
     EventTypes,
     Membership,
     RejectedReason,
+    RoomVersions,
 )
 from synapse.api.errors import (
     AuthError,
@@ -1071,6 +1072,8 @@ class FederationHandler(BaseHandler):
             },
         )
 
+        room_version = RoomVersions.V1  # FIXME
+
         # This shouldn't happen, because the RoomMemberHandler has a
         # linearizer lock which only allows one operation per user per room
         # at a time - so this is just paranoia.
@@ -1091,7 +1094,9 @@ class FederationHandler(BaseHandler):
                 target_hosts.insert(0, origin)
             except ValueError:
                 pass
-            ret = yield self.federation_client.send_join(target_hosts, event)
+            ret = yield self.federation_client.send_join(
+                target_hosts, event, room_version,
+            )
 
             origin = ret["origin"]
             state = ret["state"]
@@ -2287,10 +2292,10 @@ class FederationHandler(BaseHandler):
             "state_key": target_user_id,
         }
 
-        room_version = yield self.store.get_room_version(room_id)
-
         if (yield self.auth.check_host_in_room(room_id, self.hs.hostname)):
+            room_version = yield self.store.get_room_version(room_id)
             builder = self.event_builder_factory.new(room_version, event_dict)
+
             EventValidator().validate_new(builder)
             event, context = yield self.event_creation_handler.create_new_client_event(
                 builder=builder
@@ -2319,7 +2324,8 @@ class FederationHandler(BaseHandler):
 
     @defer.inlineCallbacks
     @log_function
-    def on_exchange_third_party_invite_request(self, origin, room_id, event_dict):
+    def on_exchange_third_party_invite_request(self, origin, room_version,
+                                               room_id, event_dict):
         """Handle an exchange_third_party_invite request from a remote server
 
         The remote server will call this when it wants to turn a 3pid invite
@@ -2328,7 +2334,6 @@ class FederationHandler(BaseHandler):
         Returns:
             Deferred: resolves (to None)
         """
-        room_version = yield self.store.get_room_version(room_id)
         builder = self.event_builder_factory.new(room_version, event_dict)
 
         event, context = yield self.event_creation_handler.create_new_client_event(

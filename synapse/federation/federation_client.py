@@ -567,6 +567,8 @@ class FederationClient(FederationBase):
                 destination, room_id, user_id, membership, params,
             )
 
+            room_version = ret.get("room_version", RoomVersions.V1)
+
             pdu_dict = ret.get("event", None)
             if not isinstance(pdu_dict, dict):
                 raise InvalidResponseError("Bad 'event' field in response")

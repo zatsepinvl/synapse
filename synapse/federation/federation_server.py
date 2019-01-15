@@ -665,10 +665,9 @@ class FederationServer(FederationBase):
         defer.returnValue(ret)
 
     @defer.inlineCallbacks
-    def on_exchange_third_party_invite_request(self, origin, room_version,
-                                               room_id, event_dict):
+    def on_exchange_third_party_invite_request(self, origin, room_id, event_dict):
         ret = yield self.handler.on_exchange_third_party_invite_request(
-            origin, room_version, room_id, event_dict
+            origin, room_id, event_dict
         )
         defer.returnValue(ret)
 

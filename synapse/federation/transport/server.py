@@ -505,9 +505,8 @@ class FederationThirdPartyInviteExchangeServlet(BaseFederationServlet):
 
     @defer.inlineCallbacks
     def on_PUT(self, origin, content, query, room_id):
-        room_version = parse_string_from_args(query, "ver", default=RoomVersions.V1)
         content = yield self.handler.on_exchange_third_party_invite_request(
-            origin, room_version, room_id, content
+            origin, room_id, content
         )
         defer.returnValue((200, content))
 

@@ -2324,8 +2324,7 @@ class FederationHandler(BaseHandler):
 
     @defer.inlineCallbacks
     @log_function
-    def on_exchange_third_party_invite_request(self, origin, room_version,
-                                               room_id, event_dict):
+    def on_exchange_third_party_invite_request(self, origin, room_id, event_dict):
         """Handle an exchange_third_party_invite request from a remote server
 
         The remote server will call this when it wants to turn a 3pid invite
@@ -2334,6 +2333,10 @@ class FederationHandler(BaseHandler):
         Returns:
             Deferred: resolves (to None)
         """
+        room_version = yield self.store.get_room_version(room_id)
+
+        # NB: event_dict has a particular format we might need to fudge if we
+        # change event formats.
         builder = self.event_builder_factory.new(room_version, event_dict)
 
         event, context = yield self.event_creation_handler.create_new_client_event(

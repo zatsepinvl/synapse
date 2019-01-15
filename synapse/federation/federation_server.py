@@ -369,13 +369,20 @@ class FederationServer(FederationBase):
         })
 
     @defer.inlineCallbacks
-    def on_invite_request(self, origin, content):
-        pdu = event_from_pdu_json(content, RoomVersions.V1)
+    def on_invite_request(self, origin, content, room_version):
+        # Note: If the room_version is `None` then it came from the v1 invite
+        # API, and so the version may be either v1 or v2. However, they both
+        # have the same event format so we can assume v1 for the purposes of
+        # parsing the event.
+        if room_version:
+            pdu = event_from_pdu_json(content, room_version)
+        else:
+            pdu = event_from_pdu_json(content, RoomVersions.V1)
         origin_host, _ = parse_server_name(origin)
         yield self.check_server_matches_acl(origin_host, pdu.room_id)
         ret_pdu = yield self.handler.on_invite_request(origin, pdu)
         time_now = self._clock.time_msec()
-        defer.returnValue((200, {"event": ret_pdu.get_pdu_json(time_now)}))
+        defer.returnValue({"event": ret_pdu.get_pdu_json(time_now)})
 
     @defer.inlineCallbacks
     def on_send_join_request(self, origin, content):

@@ -19,7 +19,7 @@ from synapse.api.constants import RoomVersions
 from synapse.types import EventID
 from synapse.util.stringutils import random_string
 
-from . import EventBase, FrozenEvent, _event_dict_property
+from . import EventBase, FrozenEventV1, _event_dict_property
 
 
 def get_event_builder(room_version, key_values={}, internal_metadata_dict={}):
@@ -55,7 +55,10 @@ class EventBuilder(EventBase):
     type = _event_dict_property("type")
 
     def build(self):
-        return FrozenEvent.from_event(self)
+        return FrozenEventV1(
+            event_dict=self.get_dict(),
+            internal_metadata_dict=self.internal_metadata.get_dict(),
+        )
 
 
 class EventBuilderFactory(object):

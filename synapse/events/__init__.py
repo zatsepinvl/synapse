@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import attr
+import copy
 import os
 from distutils.util import strtobool
 
@@ -25,6 +27,9 @@ from synapse.api.constants import (
 )
 from synapse.util.caches import intern_dict
 from synapse.util.frozenutils import freeze
+
+from canonicaljson import json
+from frozendict import frozendict
 
 # Whether we should use frozen_dict in FrozenEvent. Using frozen_dicts prevents
 # bugs where we accidentally share e.g. signature dicts. However, converting a
@@ -183,7 +188,7 @@ class EventBase(object):
         return [e for e, _ in self.auth_events]
 
 
-class FrozenEvent(EventBase):
+class FrozenEvent2(EventBase):
     format_version = EventFormatVersions.V1  # All events of this type are V1
 
     def __init__(self, event_dict, internal_metadata_dict={}, rejected_reason=None):
@@ -249,7 +254,7 @@ def event_type_from_room_version(room_version):
         raise Exception(
             "No event format defined for version %r" % (room_version,)
         )
-    return FrozenEvent
+    return FrozenEventV1
 
 
 def event_type_from_format_version(format_version):
@@ -260,4 +265,248 @@ def event_type_from_format_version(format_version):
         raise Exception(
             "No event format %r" % (format_version,)
         )
-    return FrozenEvent
+    return FrozenEventV1
+
+
+@attr.s(slots=True, frozen=True, cmp=False, hash=None)
+class FrozenEvent(object):
+    """A full event, which can't be mutated. Abstracts away differences
+    between different event format versions.
+
+    Attributes:
+        event_id (str)
+        room_id (str)
+        sender (str)
+        type (str)
+        state_key (str): If a state event, the state_key
+        depth (int)
+        redacts (str|None)
+        origin_server_ts (int)
+        content (dict)
+        signatures (dict)
+        hashes (dict)
+        unsigned (dict)
+        rejected_reason (str|None)
+        internal_metadata (_EventInternalMetadata)
+        format_version (int)
+    """
+
+    event_id = attr.ib()
+    room_id = attr.ib()
+    sender = attr.ib()
+    type = attr.ib()
+    _state_key = attr.ib()  # There is a property for `state_key`
+    depth = attr.ib()
+    redacts = attr.ib()
+    origin_server_ts = attr.ib()
+    content = attr.ib()
+    rejected_reason = attr.ib()
+    internal_metadata = attr.ib()
+    format_version = attr.ib()
+
+    signatures = attr.ib()
+    hashes = attr.ib()
+    unsigned = attr.ib()
+
+    _auth_event_ids = attr.ib()  # tuple[str]: list of auth event IDs
+    _prev_event_ids = attr.ib()  # tuple[str]: list of prev event IDs
+    # str: the serialized event json
+    _json = attr.ib()
+
+    @staticmethod
+    def from_dict(format_version, event_dict, internal_metadata_dict={},
+                  rejected_reason=None, event_json=None):
+        """Parses the event dict from a room of the given version into a
+        FrozenEvent.
+
+        Args:
+            format_version (int)
+            event_dict (dict)
+            internal_metadata_dict (dict)
+            rejected_reason (str|None): If set the event was rejected for the
+                given reason.
+            event_json (str|None): If set the json string `event_dict` was
+                parse from. If not given then it will be calculated by
+                serializing `event_dict`
+
+        Returns:
+            FrozenEvent
+        """
+        # All events currently have the same format
+        return FrozenEvent._from_v1(
+            event_dict, internal_metadata_dict,
+            rejected_reason=rejected_reason,
+            event_json=event_json,
+        )
+
+    def copy(self):
+        ev = copy.copy(self)
+
+        object.__setattr__(ev, "content", dict(ev.content))
+        object.__setattr__(ev, "signatures", dict(ev.signatures))
+        object.__setattr__(ev, "hashes", dict(ev.hashes))
+        object.__setattr__(ev, "unsigned", dict(ev.unsigned))
+        object.__setattr__(ev, "content", dict(ev.content))
+        object.__setattr__(ev, "internal_metadata", _EventInternalMetadata(
+            ev.internal_metadata.get_dict(),
+        ))
+
+        return ev
+
+    @property
+    def state_key(self):
+        if self._state_key is not None:
+            return self._state_key
+        raise AttributeError("state_key")
+
+    @property
+    def membership(self):
+        return self.content["membership"]
+
+    def auth_event_ids(self):
+        return self._auth_event_ids
+
+    def prev_event_ids(self):
+        return self._prev_event_ids
+
+    def is_state(self):
+        return hasattr(self, "state_key") and self.state_key is not None
+
+    def get_dict(self):
+        pdu_json = json.loads(self._json)
+        pdu_json["unsigned"] = self.unsigned
+        pdu_json["signatures"] = self.signatures
+        return pdu_json
+
+    def get_pdu_json(self, time_now=None):
+        pdu_json = self.get_dict()
+
+        unsigned = dict(pdu_json["unsigned"])
+        if time_now is not None and "age_ts" in unsigned:
+            age = time_now - unsigned["age_ts"]
+            unsigned["age"] = int(age)
+            del unsigned["age_ts"]
+
+        # This may be a frozen event
+        unsigned.pop("redacted_because", None)
+
+        pdu_json["unsigned"] = unsigned
+
+        return pdu_json
+
+    def __str__(self):
+        return self.__repr__()
+
+    def __repr__(self):
+        return "<FrozenEvent event_id='%s', type='%s', state_key='%s'>" % (
+            self.event_id,
+            self.type,
+            self._state_key,
+        )
+
+    # FIXME: We probably want to get rid of the below functions
+
+    def get(self, key, default=None):
+        keys = ("sender", "hashes", "state_key", "room_id", "type", "content")
+        if key in keys:
+            return getattr(self, key, default)
+
+        raise NotImplementedError(key)
+
+    def items(self):
+        return list(self.get_dict().items())
+
+    def keys(self):
+        return six.iterkeys(self.get_dict())
+
+    @property
+    def user_id(self):
+        return self.sender
+
+    @property
+    def prev_state(self):
+        return []
+
+
+@attr.s(slots=True, frozen=True, cmp=False, hash=None)
+class FrozenEventV1(FrozenEvent):
+    def __init__(self, event_dict, internal_metadata_dict={},
+                 rejected_reason=None, event_json=None):
+        """Creates a FrozenEvent from a v1 event
+
+        Args:
+            event_dict (dict)
+            internal_metadata_dict (dict)
+            rejected_reason (str|None): If set the event was rejected for the
+                given reason.
+            event_json (str|None): If set the json string `event_dict` was
+                parse from. If not given then it will be calculated by
+                serializing `event_dict`
+
+        Returns:
+            FrozenEvent
+        """
+        event_dict = dict(event_dict)  # We copy this as we're going to remove stuff
+
+        # A lot of this is optional because the tests don't actually define them
+        event_id = event_dict.get("event_id")
+        room_id = event_dict.get("room_id")
+        sender = event_dict.get("sender")
+        event_type = event_dict.get("type")
+        _state_key = event_dict.get("state_key")
+        depth = event_dict.get("depth")
+        redacts = event_dict.get("redacts")
+        origin_server_ts = event_dict.get("origin_server_ts")
+
+        # TODO: We should replace this with something that can't be modified
+        content = dict(event_dict.get("content", {}))
+
+        # Some events apparently don't have a 'hashes' field
+        # The top level is frozen since we really should be adding more hashes
+        # after the fact
+        hashes = frozendict(event_dict.get("hashes", {}))
+
+        _auth_event_ids = tuple(e for e, _ in event_dict.get("auth_events", []))
+        _prev_event_ids = tuple(e for e, _ in event_dict.get("prev_events", []))
+
+        # Signatures is a dict of dicts, and this is faster than doing a
+        # copy.deepcopy
+        # TODO: Can we compress this? We could convert the base64 to bytes?
+        signatures = {
+            name: {
+                sig_id: sig
+                for sig_id, sig in six.iteritems(sigs)
+            }
+            for name, sigs in six.iteritems(event_dict.pop("signatures", {}))
+        }
+
+        unsigned = dict(event_dict.pop("unsigned", {}))
+
+        if not event_json:
+            event_json = json.dumps(event_dict)
+
+        rejected_reason = rejected_reason
+        internal_metadata = _EventInternalMetadata(
+            internal_metadata_dict
+        )
+
+        super(FrozenEventV1, self).__init__(
+            event_id=event_id,
+            room_id=room_id,
+            sender=sender,
+            type=event_type,
+            state_key=_state_key,
+            depth=depth,
+            redacts=redacts,
+            origin_server_ts=origin_server_ts,
+            content=content,
+            signatures=signatures,
+            hashes=hashes,
+            auth_event_ids=_auth_event_ids,
+            prev_event_ids=_prev_event_ids,
+            unsigned=unsigned,
+            json=event_json,
+            rejected_reason=rejected_reason,
+            internal_metadata=internal_metadata,
+            format_version=EventFormatVersions.V1,
+        )

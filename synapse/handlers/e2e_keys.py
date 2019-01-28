@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright 2016 OpenMarket Ltd
-# Copyright 2018 New Vector Ltd
+# Copyright 2018-2019 New Vector Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,10 +22,15 @@ from canonicaljson import encode_canonical_json, json
 
 from twisted.internet import defer
 
+from signedjson.key import decode_verify_key_bytes
+from signedjson.sign import SignatureVerifyException, verify_signed_json
+
 from synapse.api.errors import CodeMessageException, FederationDeniedError, SynapseError
 from synapse.types import UserID, get_domain_from_id
 from synapse.util.logcontext import make_deferred_yieldable, run_in_background
 from synapse.util.retryutils import NotRetryingDestination
+
+from unpaddedbase64 import decode_base64
 
 logger = logging.getLogger(__name__)
 
@@ -143,8 +148,24 @@ class E2eKeysHandler(object):
             for destination in remote_queries_not_in_cache
         ], consumeErrors=True))
 
+        self_signing_keys = {}
+
+        @defer.inlineCallbacks
+        def get_self_signing_key(user_id):
+            try:
+                self_signing_keys[user_id] = \
+                    yield self.store.get_e2e_self_signing_key(user_id)
+            except Exception as e:
+                pass
+
+        yield make_deferred_yieldable(defer.gatherResults([
+            run_in_background(get_self_signing_key, user_id)
+            for user_id in local_query.keys()
+        ]))
+
         defer.returnValue({
             "device_keys": results, "failures": failures,
+            "self_signing_keys": self_signing_keys,
         })
 
     @defer.inlineCallbacks
@@ -336,6 +357,152 @@ class E2eKeysHandler(object):
         yield self.store.add_e2e_one_time_keys(
             user_id, device_id, time_now, new_keys
         )
+
+    @defer.inlineCallbacks
+    def upload_signing_keys_for_user(self, user_id, keys):
+        old_self_signing_key = yield self.store.get_e2e_self_signing_key(user_id)
+        if "self_signing_key" in keys:
+            self_signing_key = keys["self_signing_key"]
+            if self_signing_key["user_id"] != user_id \
+               or "self_signing" not in self_signing_key["usage"]:
+                raise SynapseError(
+                    400,
+                    "Invalid self-signing key"
+                )
+            if old_self_signing_key:
+                if "replaces" not in self_signing_key:
+                    raise SynapseError(
+                        400,
+                        "A self-signing key already exists"
+                    )
+                old_key_id, old_verify_key \
+                    = _get_verify_key_from_key_info(old_self_signing_key)
+                if self_signing_key["replaces"] != old_key_id.split(':', 1)[1]:
+                    raise SynapseError(
+                        400,
+                        "Incorrect replaces property"
+                    )
+            if "signatures" in self_signing_key:
+                if not old_self_signing_key:
+                    raise SynapseError(
+                        400,
+                        "Invalid signature"
+                    )
+                old_key_id, old_verify_key \
+                    = _get_verify_key_from_key_info(old_self_signing_key)
+                if user_id not in self_signing_key["signatures"] \
+                   or old_key_id not in self_signing_key["signatures"][user_id]:
+                    raise SynapseError(
+                        400,
+                        "Invalid signature on self-signing key"
+                    )
+                try:
+                    verify_signed_json(self_signing_key, user_id, old_verify_key)
+                except SignatureVerifyException as e:
+                    raise SynapseError(
+                        400,
+                        "Invalid signature on self-signing key"
+                    )
+        else:
+            self_signing_key = old_self_signing_key
+
+        key_id, verify_key = _get_verify_key_from_key_info(self_signing_key)
+
+        if "user_signing_key" in keys:
+            user_signing_key = keys["user_signing_key"]
+            if user_signing_key["user_id"] != user_id \
+               or "user_signing" not in user_signing_key["usage"]:
+                raise SynapseError(
+                    400,
+                    "Invalid user-signing key"
+                )
+            if "signatures" not in user_signing_key\
+               or user_id not in user_signing_key["signatures"] \
+               or key_id not in user_signing_key["signatures"][user_id]:
+                raise SynapseError(
+                    400,
+                    "Invalid signature on user-signing key"
+                )
+            try:
+                verify_signed_json(user_signing_key, user_id, verify_key)
+            except SignatureVerifyException as e:
+                raise SynapseError(
+                    400,
+                    "Invalid signature on user-signing key"
+                )
+
+        # if everything checks out, then store the keys
+        if "self_signing_key" in keys:
+            yield self.store.set_e2e_self_signing_key(user_id, self_signing_key)
+        if "user_signing_key" in keys:
+            yield self.store.set_e2e_user_signing_key(user_id, user_signing_key)
+
+        defer.returnValue({})
+
+    @defer.inlineCallbacks
+    def upload_signatures_for_device_keys(self, user_id, signatures):
+        # get signing keys
+        self_signing_key = self.store.get_e2e_self_signing_key(user_id)
+        if self_signing_key is None:
+            # FIXME: error
+            pass
+        self_signing_key_id, self_signing_verify_key \
+            = _get_verify_key_from_key_info(self_signing_key)
+        user_signing_key = self.store.get_e2e_user_signing_key(user_id)
+        if user_signing_key is None:
+            # FIXME: error
+            pass
+        user_signing_key_id, user_signing_verify_key \
+            = _get_verify_key_from_key_info(user_signing_key)
+
+        user_devices = []
+        for user, devicemap in signatures.items():
+            for device in devicemap.keys():
+                user_devices.append((user, device))
+        devices = yield self.store.get_e2e_device_keys(user_devices)
+        # check key and signature
+        signatures = []
+        for user, devicemap in signatures.items():
+            for device, key in devicemap.items():
+                # FIXME: also check types
+                if user not in devices or device not in devices[user]:
+                    # FIXME: error
+                    continue
+                (key_id, verify_key) = (self_signing_key_id, self_signing_verify_key) \
+                    if user == user_id else (user_signing_key_id, user_signing_verify_key)
+                if ("signatures" in key and user_id in key["signatures"]
+                        and key_id in key["signatures"][user_id]):
+                    signature = key["signatures"][user_id][key_id]
+                    del key["signatures"]
+                    del key["unsigned"]
+                    if key != devices[user][device]:
+                        # FIXME: error
+                        continue
+                    verify_signed_json(key, user_id, verify_key)
+                    signatures.append((key_id, user, device, signature))
+                else:
+                    # FIXME: error
+                    pass
+
+        yield self.store.store_e2e_device_signatures(user_id, signatures)
+
+        defer.returnValue({})
+
+
+def _get_verify_key_from_key_info(key_info):
+    if "keys" not in key_info:
+        raise SynapseError(
+            400,
+            "Invalid key"
+        )
+    keys = key_info["keys"]
+    if len(keys) != 1:
+        raise SynapseError(
+            400,
+            "Invalid key"
+        )
+    for key_id, key_data in keys.items():
+        return (key_id, decode_verify_key_bytes(key_id, decode_base64(key_data)))
 
 
 def _exception_to_failure(e):

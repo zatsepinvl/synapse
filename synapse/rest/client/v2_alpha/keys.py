@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright 2015, 2016 OpenMarket Ltd
+# Copyright 2019 New Vector Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +27,7 @@ from synapse.http.servlet import (
 )
 from synapse.types import StreamToken
 
-from ._base import client_v2_patterns
+from ._base import client_v2_patterns, interactive_auth_handler
 
 logger = logging.getLogger(__name__)
 
@@ -228,8 +229,97 @@ class OneTimeKeyServlet(RestServlet):
         defer.returnValue((200, result))
 
 
+class SigningKeyUploadServlet(RestServlet):
+    """
+    POST /keys/device_signing/upload HTTP/1.1
+    Content-Type: application/json
+
+    {
+    }
+    """
+    PATTERNS = client_v2_patterns("/keys/device_signing/upload$")
+
+    def __init__(self, hs):
+        """
+        Args:
+            hs (synapse.server.HomeServer): server
+        """
+        super(SigningKeyUploadServlet, self).__init__()
+        self.hs = hs
+        self.auth = hs.get_auth()
+        self.e2e_keys_handler = hs.get_e2e_keys_handler()
+        self.auth_handler = hs.get_auth_handler()
+
+    @interactive_auth_handler
+    @defer.inlineCallbacks
+    def on_POST(self, request):
+        requester = yield self.auth.get_user_by_req(request, allow_guest=True)
+        user_id = requester.user.to_string()
+        body = parse_json_object_from_request(request)
+
+        yield self.auth_handler.validate_user_via_ui_auth(
+            requester, body, self.hs.get_ip_from_request(request),
+        )
+
+        result = yield self.e2e_keys_handler.upload_signing_keys_for_user(
+            user_id, body
+        )
+        defer.returnValue((200, result))
+
+
+class SignaturesUploadServlet(RestServlet):
+    """
+    POST /keys/signatures/upload HTTP/1.1
+    Content-Type: application/json
+
+    {
+      "@alice:example.com": {
+        "<device_id>": {
+          "user_id": "<user_id>",
+          "device_id": "<device_id>",
+          "algorithms": [
+            "m.olm.curve25519-aes-sha256",
+            "m.megolm.v1.aes-sha"
+          ],
+          "keys": {
+            "<algorithm>:<device_id>": "<key_base64>",
+          },
+          "signatures": {
+            "<signing_user_id>": {
+              "<algorithm>:<signing_key_base64>": "<signature_base64>>"
+            }
+          }
+        }
+      }
+    }
+    """
+    PATTERNS = client_v2_patterns("/keys/signatures/upload$")
+
+    def __init__(self, hs):
+        """
+        Args:
+            hs (synapse.server.HomeServer): server
+        """
+        super(SignaturesUploadServlet, self).__init__()
+        self.auth = hs.get_auth()
+        self.e2e_keys_handler = hs.get_e2e_keys_handler()
+
+    @defer.inlineCallbacks
+    def on_POST(self, request, device_id):
+        requester = yield self.auth.get_user_by_req(request, allow_guest=True)
+        user_id = requester.user.to_string()
+        body = parse_json_object_from_request(request)
+
+        result = yield self.e2e_keys_handler.upload_signatures_for_device_keys(
+            user_id, body
+        )
+        defer.returnValue((200, result))
+
+
 def register_servlets(hs, http_server):
     KeyUploadServlet(hs).register(http_server)
     KeyQueryServlet(hs).register(http_server)
     KeyChangesServlet(hs).register(http_server)
     OneTimeKeyServlet(hs).register(http_server)
+    SigningKeyUploadServlet(hs).register(http_server)
+    SignaturesUploadServlet(hs).register(http_server)

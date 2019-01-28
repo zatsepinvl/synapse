@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright 2015, 2016 OpenMarket Ltd
+# Copyright 2019 New Vector Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +15,7 @@
 # limitations under the License.
 from six import iteritems
 
-from canonicaljson import encode_canonical_json
+from canonicaljson import encode_canonical_json, json
 
 from twisted.internet import defer
 
@@ -70,6 +71,7 @@ class EndToEndKeyStore(SQLBaseStore):
     def get_e2e_device_keys(
         self, query_list, include_all_devices=False,
         include_deleted_devices=False,
+        user_id=None,
     ):
         """Fetch a list of device keys.
         Args:
@@ -79,6 +81,7 @@ class EndToEndKeyStore(SQLBaseStore):
             include_deleted_devices (bool): whether to include null entries for
                 devices which no longer exist (but were in the query_list).
                 This option only takes effect if include_all_devices is true.
+            user_id (string): The user requesting the device keys.
         Returns:
             Dict mapping from user-id to dict mapping from device_id to
             dict containing "key_json", "device_display_name".
@@ -88,7 +91,7 @@ class EndToEndKeyStore(SQLBaseStore):
 
         results = yield self.runInteraction(
             "get_e2e_device_keys", self._get_e2e_device_keys_txn,
-            query_list, include_all_devices, include_deleted_devices,
+            query_list, include_all_devices, include_deleted_devices, user_id
         )
 
         for user_id, device_keys in iteritems(results):
@@ -100,9 +103,12 @@ class EndToEndKeyStore(SQLBaseStore):
     def _get_e2e_device_keys_txn(
         self, txn, query_list, include_all_devices=False,
         include_deleted_devices=False,
+        from_user_id=None,
     ):
         query_clauses = []
         query_params = []
+        signature_query_clauses = []
+        signature_query_params = []
 
         if include_all_devices is False:
             include_deleted_devices = False
@@ -113,12 +119,20 @@ class EndToEndKeyStore(SQLBaseStore):
         for (user_id, device_id) in query_list:
             query_clause = "user_id = ?"
             query_params.append(user_id)
+            signature_query_clause = "target_user_id = ?"
+            signature_query_params.append(user_id)
 
             if device_id is not None:
                 query_clause += " AND device_id = ?"
                 query_params.append(device_id)
+                signature_query_clause += " AND target_device_id = ?"
+                signature_query_params.append(device_id)
+
+            signature_query_clause += " AND user_id = ?"
+            signature_query_params.append(from_user_id if from_user_id else user_id)
 
             query_clauses.append(query_clause)
+            signature_query_clauses.append(signature_query_clause)
 
         sql = (
             "SELECT user_id, device_id, "
@@ -144,6 +158,25 @@ class EndToEndKeyStore(SQLBaseStore):
         if include_deleted_devices:
             for user_id, device_id in deleted_devices:
                 result.setdefault(user_id, {})[device_id] = None
+
+        signature_sql = (
+            "SELECT * "
+            "  FROM e2e_device_signatures "
+            " WHERE %s"
+        ) % (
+            " OR ".join("(" + q + ")" for q in signature_query_clauses)
+        )
+
+        txn.execute(signature_sql, signature_query_params)
+        rows = self.cursor_to_dict(txn)
+
+        for row in rows:
+            if row["target_user_id"] in result \
+               and row["target_device_id"] in result["target_user_id"]:
+                result["target_user_id"]["target_device_id"] \
+                    .setdefault("signatures", {}) \
+                    .setdefault(result["user_id"], {})[result["key_id"]] \
+                    = result["signature"]
 
         return result
 
@@ -287,4 +320,80 @@ class EndToEndKeyStore(SQLBaseStore):
             )
         return self.runInteraction(
             "delete_e2e_keys_by_device", delete_e2e_keys_by_device_txn
+        )
+
+    def _set_e2e_device_signing_key_txn(self, txn, user_id, key_type, key):
+        for v in key["keys"].values():
+            pubkey = v
+            break
+        self._simple_insert(
+            "devices",
+            values={
+                "user_id": user_id,
+                "device_id": pubkey,
+                "display_name": key_type + " signing key"
+            },
+            desc="store_master_key_device"
+        )
+
+        self._simple_insert(
+            "e2e_device_signing_keys",
+            values={
+                "user_id": user_id,
+                "keytype": key_type,
+                "keydata": json.dumps(key)
+            },
+            desc="store_master_key"
+        )
+
+    def set_e2e_user_signing_key(self, user_id, key):
+        return self.runInteraction(
+            "add_e2e_device_signing_key",
+            self._set_e2e_device_signing_key_txn,
+            user_id, "user", key
+        )
+
+    def set_e2e_self_signing_key(self, user_id, key):
+        return self.runInteraction(
+            "add_e2e_device_signing_key",
+            self._set_e2e_device_signing_key_txn,
+            user_id, "self", key
+        )
+
+    def _get_e2e_device_signing_key_txn(self, txn, user_id, key_type):
+        sql = (
+            "SELECT keydata "
+            "  FROM e2e_device_signing_keys "
+            " WHERE user_id = ? AND keytype = ? ORDER BY id DESC LIMIT 1"
+        )
+        txn.execute(sql, (user_id, key_type))
+        row = txn.fetchone()
+        if not row:
+            return None
+        return json.loads(row[0])
+
+    def get_e2e_self_signing_key(self, user_id):
+        return self.runInteraction(
+            "get_e2e_device_signing_key",
+            self._get_e2e_device_signing_key_txn,
+            user_id, "self"
+        )
+
+    def get_e2e_user_signing_key(self, user_id):
+        return self.runInteraction(
+            "get_e2e_device_signing_key",
+            self._get_e2e_device_signing_key_txn,
+            user_id, "user"
+        )
+
+    def store_e2e_device_signatures(self, user_id, signatures):
+        return self._simple_insert_many(
+            "e2e_device_signatures",
+            [{"user_id": user_id,
+              "key_id": key_id,
+              "target_user_id": target_user_id,
+              "target_device_id": target_device_id,
+              "signature": signature}
+             for (key_id, target_user_id, target_device_id, signature) in signatures],
+            "add_e2e_signing_key"
         )

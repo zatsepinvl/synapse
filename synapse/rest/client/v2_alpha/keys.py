@@ -305,7 +305,7 @@ class SignaturesUploadServlet(RestServlet):
         self.e2e_keys_handler = hs.get_e2e_keys_handler()
 
     @defer.inlineCallbacks
-    def on_POST(self, request, device_id):
+    def on_POST(self, request):
         requester = yield self.auth.get_user_by_req(request, allow_guest=True)
         user_id = requester.user.to_string()
         body = parse_json_object_from_request(request)

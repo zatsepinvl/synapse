@@ -341,7 +341,8 @@ class EndToEndKeyStore(SQLBaseStore):
             values={
                 "user_id": user_id,
                 "keytype": key_type,
-                "keydata": json.dumps(key)
+                "keydata": json.dumps(key),
+                "ts": int(self._clock.time_msec())
             },
             desc="store_master_key"
         )
@@ -364,7 +365,7 @@ class EndToEndKeyStore(SQLBaseStore):
         sql = (
             "SELECT keydata "
             "  FROM e2e_device_signing_keys "
-            " WHERE user_id = ? AND keytype = ? ORDER BY id DESC LIMIT 1"
+            " WHERE user_id = ? AND keytype = ? ORDER BY ts DESC LIMIT 1"
         )
         txn.execute(sql, (user_id, key_type))
         row = txn.fetchone()

@@ -15,13 +15,13 @@
 
 -- device signing keys for cross-signing
 CREATE TABLE e2e_device_signing_keys (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
     keytype TEXT NOT NULL,
-    keydata TEXT NOT NULL
+    keydata TEXT NOT NULL,
+    ts INTEGER NOT NULL
 );
 
-CREATE UNIQUE INDEX e2e_device_signing_keys_idx ON e2e_device_signing_keys(user_id, keytype, id);
+CREATE UNIQUE INDEX e2e_device_signing_keys_idx ON e2e_device_signing_keys(user_id, keytype, ts);
 
 -- devices signatures for cross-signing
 CREATE TABLE e2e_device_signatures (

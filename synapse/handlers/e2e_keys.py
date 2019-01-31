@@ -51,7 +51,7 @@ class E2eKeysHandler(object):
         )
 
     @defer.inlineCallbacks
-    def query_devices(self, query_body, timeout):
+    def query_devices(self, query_body, timeout, from_user_id=None):
         """ Handle a device key query from a client
 
         {
@@ -154,7 +154,7 @@ class E2eKeysHandler(object):
         def get_self_signing_key(user_id):
             try:
                 self_signing_keys[user_id] = \
-                    yield self.store.get_e2e_self_signing_key(user_id)
+                    yield self.store.get_e2e_self_signing_key(user_id, from_user_id)
             except Exception as e:
                 pass
 
@@ -432,61 +432,151 @@ class E2eKeysHandler(object):
                 )
 
         # if everything checks out, then store the keys
+        deviceids = []
         if "self_signing_key" in keys:
             yield self.store.set_e2e_self_signing_key(user_id, self_signing_key)
+            deviceids.append(key_id)
         if "user_signing_key" in keys:
             yield self.store.set_e2e_user_signing_key(user_id, user_signing_key)
+            deviceids.append(_get_verify_key_from_key_info(user_signing_key)[0])
+
+        if len(deviceids):
+            yield self.device_handler.notify_device_update(user_id, deviceids)
 
         defer.returnValue({})
 
     @defer.inlineCallbacks
     def upload_signatures_for_device_keys(self, user_id, signatures):
-        # get signing keys
-        self_signing_key = self.store.get_e2e_self_signing_key(user_id)
-        if self_signing_key is None:
-            # FIXME: error
-            pass
-        self_signing_key_id, self_signing_verify_key \
-            = _get_verify_key_from_key_info(self_signing_key)
-        user_signing_key = self.store.get_e2e_user_signing_key(user_id)
-        if user_signing_key is None:
-            # FIXME: error
-            pass
-        user_signing_key_id, user_signing_verify_key \
-            = _get_verify_key_from_key_info(user_signing_key)
-
-        user_devices = []
-        for user, devicemap in signatures.items():
-            for device in devicemap.keys():
-                user_devices.append((user, device))
-        devices = yield self.store.get_e2e_device_keys(user_devices)
+        failures = {}
         # check key and signature
-        signatures = []
-        for user, devicemap in signatures.items():
-            for device, key in devicemap.items():
-                # FIXME: also check types
-                if user not in devices or device not in devices[user]:
+        signature_list = []
+        self_device_ids = []
+        # split between checking signatures for own user and signatures for
+        # other users
+        if user_id in signatures:
+            self_signatures = signatures[user_id]
+            del signatures[user_id]
+            self_device_ids = list(self_signatures.keys())
+
+            self_signing_key = yield self.store.get_e2e_self_signing_key(user_id)
+            if self_signing_key is None:
+                # FIXME: error?
+                pass
+            else:
+                self_signing_key_id, self_signing_verify_key \
+                    = _get_verify_key_from_key_info(self_signing_key)
+
+            user_devices = []
+            for device in self_signatures.keys():
+                user_devices.append((user_id, device))
+            devices = yield self.store.get_e2e_device_keys(user_devices)
+
+            if user_id not in devices:
+                # FIXME: error
+                pass
+
+            devices = devices[user_id]
+            for device, key in self_signatures.items():
+                if ("signatures" not in key or user_id not in key["signatures"]
+                        or self_signing_key_id not in key["signatures"][user_id]):
                     # FIXME: error
                     continue
-                (key_id, verify_key) = (self_signing_key_id, self_signing_verify_key) \
-                    if user == user_id else (user_signing_key_id, user_signing_verify_key)
-                if ("signatures" in key and user_id in key["signatures"]
-                        and key_id in key["signatures"][user_id]):
-                    signature = key["signatures"][user_id][key_id]
-                    del key["signatures"]
+
+                signature = key["signatures"][user_id][self_signing_key_id]
+                del key["signatures"]
+                if "unsigned" in key:
                     del key["unsigned"]
-                    if key != devices[user][device]:
-                        # FIXME: error
-                        continue
-                    verify_signed_json(key, user_id, verify_key)
-                    signatures.append((key_id, user, device, signature))
-                else:
+                stored_key = devices[device]["keys"]
+                if "signatures" in stored_key:
+                    del stored_key["signatures"]
+                if "unsigned" in stored_key:
+                    del stored_key["unsigned"]
+                if key != stored_key:
                     # FIXME: error
-                    pass
+                    logger.error(
+                        "upload signatures: key does not match %s vs %s",
+                        key, stored_key
+                    )
+                    continue
+                try:
+                    verify_signed_json(key, user_id, self_signing_verify_key)
+                except SignatureVerifyException as e:
+                    # FIXME: error
+                    continue
+                signature_list.append(
+                    (self_signing_key_id, user_id, device, signature)
+                )
 
-        yield self.store.store_e2e_device_signatures(user_id, signatures)
+        signed_users = []
+        if len(signatures):
+            # if signatures isn't empty, then we have signatures for other
+            # users.  These signatures will be signed by the user signing key
+            user_signing_key = yield self.store.get_e2e_user_signing_key(user_id)
+            if user_signing_key is None:
+                # FIXME: error
+                pass
+            user_signing_key_id, user_signing_verify_key \
+                = _get_verify_key_from_key_info(user_signing_key)
 
-        defer.returnValue({})
+            for user, devicemap in signatures.items():
+                user_key = yield self.store.get_e2e_self_signing_key(user)
+                if user_key is None:
+                    logger.error("upload signature: no user key found for %s", user)
+                    # FIXME: error
+                    continue
+                device = _get_verify_key_from_key_info(user_key)[0] \
+                    .split(":", 1)[1]
+                if device not in devicemap:
+                    logger.error(
+                        "upload signature: wrong device: %s vs %s",
+                        device, devicemap
+                    )
+                    # FIXME: error
+                    continue
+                elif len(devicemap) > 1:
+                    logger.error("upload signature: too many devices specified")
+                    # FIXME: error
+                    continue
+
+                key = devicemap[device]
+
+                if ("signatures" not in key or user_id not in key["signatures"]
+                        or user_signing_key_id not in key["signatures"][user_id]):
+                    logger.error("upload signature: user not found in signatures")
+                    # FIXME: error
+                    continue
+
+                signature = key["signatures"][user_id][user_signing_key_id]
+                del key["signatures"]
+                if "unsigned" in key:
+                    del key["unsigned"]
+                if "signatures" in user_key:
+                    del user_key["signatures"]
+                if "unsigned" in user_key:
+                    del user_key["unsigned"]
+                if key != user_key:
+                    # FIXME: error
+                    logger.error(
+                        "upload signature: key does not match %s vs %s",
+                        key, user_key
+                    )
+                    continue
+                try:
+                    verify_signed_json(key, user_id, user_signing_verify_key)
+                except SignatureVerifyException as e:
+                    # FIXME: error
+                    continue
+                signed_users.append(user)
+                signature_list.append((user_signing_key_id, user, device, signature))
+
+        yield self.store.store_e2e_device_signatures(user_id, signature_list)
+
+        if len(self_device_ids):
+            yield self.device_handler.notify_device_update(user_id, self_device_ids)
+        if len(signed_users):
+            yield self.device_handler.notify_user_signature_update(user_id, signed_users)
+
+        defer.returnValue({"failures": failures})
 
 
 def _get_verify_key_from_key_info(key_info):

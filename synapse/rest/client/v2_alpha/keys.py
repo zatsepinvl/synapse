@@ -144,10 +144,11 @@ class KeyQueryServlet(RestServlet):
 
     @defer.inlineCallbacks
     def on_POST(self, request):
-        yield self.auth.get_user_by_req(request, allow_guest=True)
+        requester = yield self.auth.get_user_by_req(request, allow_guest=True)
+        user_id = requester.user.to_string()
         timeout = parse_integer(request, "timeout", 10 * 1000)
         body = parse_json_object_from_request(request)
-        result = yield self.e2e_keys_handler.query_devices(body, timeout)
+        result = yield self.e2e_keys_handler.query_devices(body, timeout, user_id)
         defer.returnValue((200, result))
 
 

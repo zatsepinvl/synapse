@@ -33,3 +33,12 @@ CREATE TABLE e2e_device_signatures (
 );
 
 CREATE UNIQUE INDEX e2e_device_signatures_idx ON e2e_device_signatures(user_id, target_user_id, target_device_id);
+
+-- stream of user signature updates
+CREATE TABLE user_signature_stream (
+    stream_id BIGINT NOT NULL,
+    from_user_id TEXT NOT NULL,
+    user_ids TEXT NOT NULL
+);
+
+CREATE INDEX user_signature_stream_idx ON user_signature_stream(stream_id, from_user_id);

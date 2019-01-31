@@ -97,6 +97,11 @@ class EndToEndKeyStore(SQLBaseStore):
         for user_id, device_keys in iteritems(results):
             for device_id, device_info in iteritems(device_keys):
                 device_info["keys"] = db_to_json(device_info.pop("key_json"))
+                if "signatures" in device_info:
+                    for sig_user_id, sigs in device_info["signatures"].items():
+                        device_info["keys"].setdefault("signatures", {}) \
+                                           .setdefault(sig_user_id, {}) \
+                                           .update(sigs)
 
         defer.returnValue(results)
 
@@ -171,12 +176,14 @@ class EndToEndKeyStore(SQLBaseStore):
         rows = self.cursor_to_dict(txn)
 
         for row in rows:
-            if row["target_user_id"] in result \
-               and row["target_device_id"] in result["target_user_id"]:
-                result["target_user_id"]["target_device_id"] \
+            target_user_id = row["target_user_id"]
+            target_device_id = row["target_device_id"]
+            if target_user_id in result \
+               and target_device_id in result[target_user_id]:
+                result[target_user_id][target_device_id] \
                     .setdefault("signatures", {}) \
-                    .setdefault(result["user_id"], {})[result["key_id"]] \
-                    = result["signature"]
+                    .setdefault(row["user_id"], {})[row["key_id"]] \
+                    = row["signature"]
 
         return result
 
@@ -361,7 +368,7 @@ class EndToEndKeyStore(SQLBaseStore):
             user_id, "self", key
         )
 
-    def _get_e2e_device_signing_key_txn(self, txn, user_id, key_type):
+    def _get_e2e_device_signing_key_txn(self, txn, user_id, key_type, from_user_id=None):
         sql = (
             "SELECT keydata "
             "  FROM e2e_device_signing_keys "
@@ -371,20 +378,41 @@ class EndToEndKeyStore(SQLBaseStore):
         row = txn.fetchone()
         if not row:
             return None
-        return json.loads(row[0])
+        key = json.loads(row[0])
 
-    def get_e2e_self_signing_key(self, user_id):
+        device_id = None
+        for k in key["keys"].values():
+            device_id = k
+
+        if from_user_id is not None:
+            sql = (
+                "SELECT key_id, signature "
+                "  FROM e2e_device_signatures "
+                " WHERE user_id = ? "
+                "   AND target_user_id = ? "
+                "   AND target_device_id = ? "
+            )
+            txn.execute(sql, (from_user_id, user_id, device_id))
+            row = txn.fetchone()
+            if row:
+                key.setdefault("signatures", {}) \
+                   .setdefault(from_user_id, {})[row[0]] = row[1]
+            else:
+
+        return key
+
+    def get_e2e_self_signing_key(self, user_id, from_user_id=None):
         return self.runInteraction(
             "get_e2e_device_signing_key",
             self._get_e2e_device_signing_key_txn,
-            user_id, "self"
+            user_id, "self", from_user_id
         )
 
-    def get_e2e_user_signing_key(self, user_id):
+    def get_e2e_user_signing_key(self, user_id, from_user_id=None):
         return self.runInteraction(
             "get_e2e_device_signing_key",
             self._get_e2e_device_signing_key_txn,
-            user_id, "user"
+            user_id, "user", from_user_id
         )
 
     def store_e2e_device_signatures(self, user_id, signatures):

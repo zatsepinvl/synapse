@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright 2016 OpenMarket Ltd
+# Copyright 2019 New Vector Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -283,6 +284,19 @@ class DeviceHandler(BaseHandler):
             for host in hosts:
                 self.federation_sender.send_device_messages(host)
 
+    @defer.inlineCallbacks
+    def notify_user_signature_update(self, from_user_id, user_ids):
+        """Notify a user that they have made new signatures of other users.
+        """
+
+        position = yield self.store.add_user_signature_change_to_streams(
+            from_user_id, user_ids
+        )
+
+        self.notifier.on_new_event(
+            "device_list_key", position, users=[from_user_id],
+        )
+
     @measure_func("device.get_user_ids_changed")
     @defer.inlineCallbacks
     def get_user_ids_changed(self, user_id, from_token):
@@ -301,6 +315,11 @@ class DeviceHandler(BaseHandler):
         changed = yield self.store.get_user_whose_devices_changed(
             from_token.device_list_key
         )
+
+        user_signatures_changed = yield self.store.get_users_whose_signatures_changed(
+            user_id, from_token.device_list_key
+        )
+        changed.update(user_signatures_changed)
 
         # Then work out if any users have since joined
         rooms_changed = self.store.get_rooms_that_changed(room_ids, from_token.room_key)

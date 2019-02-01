@@ -397,7 +397,6 @@ class EndToEndKeyStore(SQLBaseStore):
             if row:
                 key.setdefault("signatures", {}) \
                    .setdefault(from_user_id, {})[row[0]] = row[1]
-            else:
 
         return key
 

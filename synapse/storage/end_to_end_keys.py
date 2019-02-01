@@ -21,6 +21,8 @@ from twisted.internet import defer
 
 from synapse.util.caches.descriptors import cached
 
+import time
+
 from ._base import SQLBaseStore, db_to_json
 
 
@@ -349,7 +351,7 @@ class EndToEndKeyStore(SQLBaseStore):
                 "user_id": user_id,
                 "keytype": key_type,
                 "keydata": json.dumps(key),
-                "ts": int(self._clock.time_msec())
+                "ts": time.time() * 1000
             },
             desc="store_master_key"
         )

@@ -157,7 +157,8 @@ class E2eKeysHandlerTestCase(unittest.TestCase):
                 "user_id": local_user,
                 "usage": ["self_signing"],
                 "keys": {
-                    "ed25519:nqOvzeuGWT/sRx3h7+MHoInYj3Uk2LD/unI9kDYcHwk": "nqOvzeuGWT/sRx3h7+MHoInYj3Uk2LD/unI9kDYcHwk"
+                    "ed25519:nqOvzeuGWT/sRx3h7+MHoInYj3Uk2LD/unI9kDYcHwk":
+                    "nqOvzeuGWT/sRx3h7+MHoInYj3Uk2LD/unI9kDYcHwk"
                 }
             }
         }
@@ -169,7 +170,8 @@ class E2eKeysHandlerTestCase(unittest.TestCase):
                 "user_id": local_user,
                 "usage": ["self_signing"],
                 "keys": {
-                    "ed25519:Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw": "Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw"
+                    "ed25519:Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw":
+                    "Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw"
                 },
                 "replaces": "nqOvzeuGWT/sRx3h7+MHoInYj3Uk2LD/unI9kDYcHwk"
             }
@@ -200,7 +202,8 @@ class E2eKeysHandlerTestCase(unittest.TestCase):
                 "user_id": local_user,
                 "usage": ["self_signing"],
                 "keys": {
-                    "ed25519:nqOvzeuGWT/sRx3h7+MHoInYj3Uk2LD/unI9kDYcHwk": "nqOvzeuGWT/sRx3h7+MHoInYj3Uk2LD/unI9kDYcHwk"
+                    "ed25519:nqOvzeuGWT/sRx3h7+MHoInYj3Uk2LD/unI9kDYcHwk":
+                    "nqOvzeuGWT/sRx3h7+MHoInYj3Uk2LD/unI9kDYcHwk"
                 }
             }
         }
@@ -215,7 +218,8 @@ class E2eKeysHandlerTestCase(unittest.TestCase):
                     "user_id": local_user,
                     "usage": ["self_signing"],
                     "keys": {
-                        "ed25519:Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw": "Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw"
+                        "ed25519:Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw":
+                        "Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw"
                     },
                 }
             }
@@ -233,7 +237,8 @@ class E2eKeysHandlerTestCase(unittest.TestCase):
                     "user_id": local_user,
                     "usage": ["self_signing"],
                     "keys": {
-                        "ed25519:Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw": "Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw"
+                        "ed25519:Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw":
+                        "Hq6gL+utB4ET+UvD5ci0kgAwsX6qP/zvf8v6OInU5iw"
                     },
                     "replaces": "wrong+id"
                 }

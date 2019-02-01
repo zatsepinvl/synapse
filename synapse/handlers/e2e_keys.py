@@ -498,9 +498,15 @@ class E2eKeysHandler(object):
                         key, stored_key
                     )
                     continue
+                key["signatures"] = {
+                    user_id: {
+                        self_signing_key_id: signature
+                    }
+                }
                 try:
                     verify_signed_json(key, user_id, self_signing_verify_key)
                 except SignatureVerifyException as e:
+                    logger.error("invalid signature on key")
                     # FIXME: error
                     continue
                 signature_list.append(
@@ -561,9 +567,15 @@ class E2eKeysHandler(object):
                         key, user_key
                     )
                     continue
+                key["signatures"] = {
+                    user_id: {
+                        user_signing_key_id: signature
+                    }
+                }
                 try:
                     verify_signed_json(key, user_id, user_signing_verify_key)
                 except SignatureVerifyException as e:
+                    logger.error("invalid signature on key")
                     # FIXME: error
                     continue
                 signed_users.append(user)

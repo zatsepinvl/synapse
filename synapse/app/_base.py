@@ -283,9 +283,12 @@ def setup_sentry_io(hs):
         return
 
     import sentry_sdk
+    from synapse.util.sentry_io import TwistedIntegration
+
     sentry_sdk.init(
         dsn=hs.config.sentry_dsn,
         release=get_version_string(synapse),
+        integrations=[TwistedIntegration()]
     )
     with sentry_sdk.configure_scope() as scope:
         scope.set_tag("matrix_server_name", hs.config.server_name)

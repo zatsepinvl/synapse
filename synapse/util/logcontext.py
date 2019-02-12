@@ -49,6 +49,13 @@ except Exception:
         return None
 
 
+_log_context_hooks = []
+
+
+def add_logcontext_hook(hook):
+    _log_context_hooks.append(hook)
+
+
 class ContextResourceUsage(object):
     """Object for tracking the resources used by a log context
 
@@ -163,7 +170,7 @@ class LoggingContext(object):
         "_resource_usage",
         "usage_start",
         "main_thread", "alive",
-        "request", "tag",
+        "request", "tag", "_hooks",
     ]
 
     thread_local = threading.local()
@@ -220,6 +227,18 @@ class LoggingContext(object):
 
         if self.parent_context is not None:
             self.parent_context.copy_to(self)
+
+        self._hooks = []
+
+        # We extend the hooks with the parent contexts, so that they're started
+        # while this context is alive.
+        if self.parent_context:
+            self._hooks.extend(parent_context._hooks)
+
+        for hook_cls in _log_context_hooks:
+            hook = hook_cls.create(parent_context is None)
+            if hook is not None:
+                self._hooks.append(hook)
 
         if request is not None:
             # the request param overrides the request from the parent context
@@ -308,6 +327,9 @@ class LoggingContext(object):
             logger.warning("Started logcontext %s on different thread", self)
             return
 
+        for hook in self._hooks:
+            hook.start()
+
         # If we haven't already started record the thread resource usage so
         # far
         if not self.usage_start:
@@ -324,6 +346,9 @@ class LoggingContext(object):
                 "Called stop on logcontext %s without calling start", self,
             )
             return
+
+        for hook in self._hooks:
+            hook.stop()
 
         usage_end = get_thread_resource_usage()
 
@@ -638,3 +663,15 @@ def defer_to_threadpool(reactor, threadpool, f, *args, **kwargs):
     return make_deferred_yieldable(
         threads.deferToThreadPool(reactor, threadpool, g)
     )
+
+
+class LogContextHook(object):
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    @classmethod
+    def create(cls, is_top_level):
+        return cls()

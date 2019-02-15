@@ -348,7 +348,30 @@ class TransactionQueue(object):
 
                 self._attempt_new_transaction(destination)
 
+    def send_edus(self, destinations, edu_type, content, key=None):
+        """Sends an EDU to multiple destinations
+
+        Args:
+            destinations (list[str])
+            edu_type (str)
+            content (dict)
+            key (any|None): If not None, then any older pending EDUs with the
+                same key will be dropped.
+        """
+        for destination in destinations:
+            self.send_edu(destination, edu_type, content, key)
+
     def send_edu(self, destination, edu_type, content, key=None):
+        """Send an edu
+
+        Args:
+            destination (str)
+            edu_type (str)
+            content (dict)
+            key (any|None): If not None, then any older pending EDUs with the
+                same key will be dropped.
+        """
+
         edu = Edu(
             origin=self.server_name,
             destination=destination,

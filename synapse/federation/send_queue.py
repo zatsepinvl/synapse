@@ -29,6 +29,7 @@ dead worker doesn't cause the queues to grow limitlessly.
 Events are replicated via a separate events stream.
 """
 
+import attr
 import logging
 from collections import namedtuple
 
@@ -45,6 +46,16 @@ from .units import Edu
 logger = logging.getLogger(__name__)
 
 
+@attr.s
+class MultiEDU(object):
+    """Represents and EDU we need to send to multiple different destinations.
+    """
+
+    destinations = attr.ib()
+    edu_type = attr.ib()
+    content = attr.ib()
+
+
 class FederationRemoteSendQueue(object):
     """A drop in replacement for TransactionQueue"""
 
@@ -57,8 +68,8 @@ class FederationRemoteSendQueue(object):
         self.presence_map = {}  # Pending presence map user_id -> UserPresenceState
         self.presence_changed = SortedDict()  # Stream position -> user_id
 
-        self.keyed_edu = {}  # (destination, key) -> EDU
-        self.keyed_edu_changed = SortedDict()  # stream position -> (destination, key)
+        self.keyed_edu = {}  # (type, key) -> MultiEDU
+        self.keyed_edu_changed = SortedDict()  # stream position -> (type, key)
 
         self.edus = SortedDict()  # stream position -> Edu
 
@@ -159,25 +170,30 @@ class FederationRemoteSendQueue(object):
         # stream.
         pass
 
-    def send_edu(self, destination, edu_type, content, key=None):
+    def send_edus(self, destinations, edu_type, content, key=None):
         """As per TransactionQueue"""
+
         pos = self._next_pos()
 
-        edu = Edu(
-            origin=self.server_name,
-            destination=destination,
+        edu = MultiEDU(
+            destination=destinations,
             edu_type=edu_type,
             content=content,
         )
 
         if key:
             assert isinstance(key, tuple)
-            self.keyed_edu[(destination, key)] = edu
-            self.keyed_edu_changed[pos] = (destination, key)
+            self.keyed_edu[(edu_type, key)] = edu
+            self.keyed_edu_changed[pos] = (edu_type, key)
         else:
             self.edus[pos] = edu
 
         self.notifier.on_new_replication_data()
+
+    def send_edu(self, destination, edu_type, content, key=None):
+        """As per TransactionQueue"""
+
+        self.send_edus([destination], edu_type, content, key)
 
     def send_presence(self, states):
         """As per TransactionQueue
@@ -256,10 +272,10 @@ class FederationRemoteSendQueue(object):
         # stream position.
         keyed_edus = {v: k for k, v in self.keyed_edu_changed.items()[i:j]}
 
-        for ((destination, edu_key), pos) in iteritems(keyed_edus):
+        for ((edu_type, edu_key), pos) in iteritems(keyed_edus):
             rows.append((pos, KeyedEduRow(
                 key=edu_key,
-                edu=self.keyed_edu[(destination, edu_key)],
+                edu=self.keyed_edu[(edu_type, edu_key)],
             )))
 
         # Fetch changed edus
@@ -346,7 +362,7 @@ class PresenceRow(BaseFederationRow, namedtuple("PresenceRow", (
 
 class KeyedEduRow(BaseFederationRow, namedtuple("KeyedEduRow", (
     "key",  # tuple(str) - the edu key passed to send_edu
-    "edu",  # Edu
+    "edu",  # MutliEdu
 ))):
     """Streams EDUs that have an associated key that is ued to clobber. For example,
     typing EDUs clobber based on room_id.
@@ -358,23 +374,37 @@ class KeyedEduRow(BaseFederationRow, namedtuple("KeyedEduRow", (
     def from_data(data):
         return KeyedEduRow(
             key=tuple(data["key"]),
-            edu=Edu(**data["edu"]),
+            edu=MultiEDU(**data["edu"]),
         )
 
     def to_data(self):
         return {
             "key": self.key,
-            "edu": self.edu.get_internal_dict(),
+            "edu": {
+                "destinations": self.edu.destinations,
+                "type": self.edu.edu_type,
+                "content": self.edu.content,
+            },
         }
 
     def add_to_buffer(self, buff):
-        buff.keyed_edus.setdefault(
-            self.edu.destination, {}
-        )[self.key] = self.edu
+        """Add to given buffer
+
+        Args:
+            buff (ParsedFederationStreamData)
+        """
+        for destination in self.edu.destinations:
+            buff.keyed_edus.setdefault(
+                destination, {},
+            )[self.key] = Edu(
+                destination=destination,
+                edu_type=self.edu.edu_type,
+                content=self.edu.content,
+            )
 
 
 class EduRow(BaseFederationRow, namedtuple("EduRow", (
-    "edu",  # Edu
+    "edu",  # MultiEdu
 ))):
     """Streams EDUs that don't have keys. See KeyedEduRow
     """
@@ -382,13 +412,26 @@ class EduRow(BaseFederationRow, namedtuple("EduRow", (
 
     @staticmethod
     def from_data(data):
-        return EduRow(Edu(**data))
+        return EduRow(
+            edu=MultiEDU(**data),
+        )
 
     def to_data(self):
-        return self.edu.get_internal_dict()
+        return {
+            "destinations": self.edu.destinations,
+            "type": self.edu.edu_type,
+            "content": self.edu.content,
+        }
 
     def add_to_buffer(self, buff):
-        buff.edus.setdefault(self.edu.destination, []).append(self.edu)
+        for destination in self.edu.destinations:
+            buff.edus.setdefault(
+                destination, [],
+            ).append(Edu(
+                destination=destination,
+                edu_type=self.edu.edu_type,
+                content=self.edu.content,
+            ))
 
 
 class DeviceRow(BaseFederationRow, namedtuple("DeviceRow", (

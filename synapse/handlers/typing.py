@@ -228,19 +228,21 @@ class TypingHandler(object):
                 then=now + FEDERATION_PING_INTERVAL,
             )
 
-            for domain in set(get_domain_from_id(u) for u in users):
-                if domain != self.server_name:
-                    logger.debug("sending typing update to %s", domain)
-                    self.federation.send_edu(
-                        destination=domain,
-                        edu_type="m.typing",
-                        content={
-                            "room_id": member.room_id,
-                            "user_id": member.user_id,
-                            "typing": typing,
-                        },
-                        key=member,
-                    )
+            domains = set(
+                get_domain_from_id(u) for u in users
+            )
+            domains.discard(self.server_name)
+
+            self.federation.send_edus(
+                destinations=list(domains),
+                edu_type="m.typing",
+                content={
+                    "room_id": member.room_id,
+                    "user_id": member.user_id,
+                    "typing": typing,
+                },
+                key=member,
+            )
         except Exception:
             logger.exception("Error pushing typing notif to remotes")
 

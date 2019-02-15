@@ -147,22 +147,21 @@ class ReceiptsHandler(BaseHandler):
 
                 logger.debug("Sending receipt to: %r", remotedomains)
 
-                for domain in remotedomains:
-                    self.federation.send_edu(
-                        destination=domain,
-                        edu_type="m.receipt",
-                        content={
-                            room_id: {
-                                receipt_type: {
-                                    user_id: {
-                                        "event_ids": event_ids,
-                                        "data": data,
-                                    }
+                self.federation.send_edus(
+                    destinations=remotedomains,
+                    edu_type="m.receipt",
+                    content={
+                        room_id: {
+                            receipt_type: {
+                                user_id: {
+                                    "event_ids": event_ids,
+                                    "data": data,
                                 }
-                            },
+                            }
                         },
-                        key=(room_id, receipt_type, user_id),
-                    )
+                    },
+                    key=(room_id, receipt_type, user_id),
+                )
         except Exception:
             logger.exception("Error pushing receipts to remote servers")
 

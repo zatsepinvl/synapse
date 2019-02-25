@@ -777,6 +777,13 @@ class FederationClient(FederationBase):
         Returns:
             dict: The event as a dict as returned by the remote server
         """
+
+        raise SynapseError(
+            400,
+            "User's homeserver does not support this room version",
+            Codes.UNSUPPORTED_ROOM_VERSION,
+        )
+
         time_now = self._clock.time_msec()
 
         try:

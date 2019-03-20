@@ -116,6 +116,7 @@ class RdataCommand(Command):
         )
 
     def to_line(self):
+        logger.info("Sending %s" % self.row)
         return " ".join((
             self.stream_name,
             str(self.token) if self.token is not None else "batch",

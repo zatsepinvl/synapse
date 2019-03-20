@@ -118,6 +118,7 @@ class ReceiptsHandler(BaseHandler):
         if not is_new:
             return
 
+        logger.info("Federating receipt with data of type %s" % type(receipt.data))
         self.federation.send_read_receipt(receipt)
 
     @defer.inlineCallbacks

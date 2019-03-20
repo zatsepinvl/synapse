@@ -257,6 +257,7 @@ class FederationSender(object):
             return
 
         logger.debug("Sending receipt to: %r", domains)
+        logger.info("Sending receipt with data of type %s" % type(receipt.data))
 
         content = {
             receipt.room_id: {

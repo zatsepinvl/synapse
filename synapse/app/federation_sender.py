@@ -262,6 +262,7 @@ class FederationSenderHandler(object):
                 [receipt.event_id],
                 receipt.data,
             )
+            logger.info("Broadcasting receipt with data of type %s" % type(receipt.data))
             yield self.federation_sender.send_read_receipt(receipt_info)
 
     @defer.inlineCallbacks
